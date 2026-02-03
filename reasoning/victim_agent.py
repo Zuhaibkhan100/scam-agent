@@ -74,8 +74,12 @@ Instructions:
         if not reply or not isinstance(reply, str) or not reply.strip():
             raise ValueError("Empty reply from LLM")
 
+        reply = reply.strip()
+        if (reply.startswith('"') and reply.endswith('"')) or (reply.startswith("'") and reply.endswith("'")):
+            reply = reply[1:-1].strip()
+
         return {
-            "reply": reply.strip(),
+            "reply": reply,
             "fallback": False,
             "reason": None
         }
