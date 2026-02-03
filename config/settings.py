@@ -57,6 +57,16 @@ class Settings:
         os.getenv("DEFAULT_CONFIDENCE_ON_FAILURE", "0.5")
     )
 
+    # ---------------------------
+    # Callback to evaluation platform (required for scoring)
+    # ---------------------------
+    CALLBACK_URL: str = os.getenv(
+        "CALLBACK_URL",
+        "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
+    )
+    CALLBACK_ENABLED: bool = os.getenv("CALLBACK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    CALLBACK_MIN_TURNS: int = int(os.getenv("CALLBACK_MIN_TURNS", "2"))
+
 
 # --------------------------------------------------
 # Singleton settings object

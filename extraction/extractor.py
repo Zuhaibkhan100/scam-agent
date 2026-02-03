@@ -6,7 +6,8 @@ import re
 URL_PATTERN = r"https?://[^\s]+"
 UPI_PATTERN = r"\b[\w.\-]{2,}@[a-zA-Z]{2,}\b"
 EMAIL_PATTERN = r"[\w\.-]+@[\w\.-]+\.\w+"
-PHONE_PATTERN = r"\b\d{10}\b"
+PHONE_PATTERN = r"\b(?:\+?\d{1,3}[-.\s]?)?\d{10}\b"
+BANK_ACCOUNT_PATTERN = r"\b\d{9,18}\b"
 
 # ==================================================
 # Scam tactic keywords (deterministic signals)
@@ -50,6 +51,7 @@ def extract_intelligence(text: str) -> dict:
     upi_ids = re.findall(UPI_PATTERN, text)
     emails = re.findall(EMAIL_PATTERN, text)
     phone_numbers = re.findall(PHONE_PATTERN, text)
+    bank_accounts = re.findall(BANK_ACCOUNT_PATTERN, text)
 
     # Detect scam tactics
     tactics = []
@@ -71,6 +73,7 @@ def extract_intelligence(text: str) -> dict:
         "upi_ids": upi_ids,
         "emails": emails,
         "phone_numbers": phone_numbers,
+        "bank_accounts": bank_accounts,
         "tactics": tactics,
         "impersonation": impersonation
     }

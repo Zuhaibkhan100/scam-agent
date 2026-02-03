@@ -1,7 +1,9 @@
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from models.schemas import ScamCheckRequest, ScamCheckResponse
+from models.honeypot_schemas import HoneypotRequest, HoneypotResponse, IntelligencePayload
 from models.victim_agent_schemas import VictimReplyRequest, VictimReplyResponse
+from models.hackathon_schemas import HackathonRequest, HackathonResponse
 
 from detection.scam_classifier import classify_message
 from reasoning.victim_agent import generate_passive_reply
@@ -9,6 +11,7 @@ from extraction.extractor import extract_intelligence
 from agent.controller import decide_agent_mode
 from reasoning.analyst import analyze_intelligence
 from config.settings import settings
+import requests
 
 app = FastAPI(
     title="Agentic Honey-Pot – Scam Classification API",
@@ -48,6 +51,54 @@ def require_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
 # In-memory conversation memory
 # --------------------------------------------------
 conversation_memory = {}
+callback_sent = set()
+
+
+def _build_intel_payload(intel: dict) -> IntelligencePayload:
+    return IntelligencePayload(
+        bankAccounts=intel.get("bank_accounts", []),
+        upiIds=intel.get("upi_ids", []),
+        phishingLinks=intel.get("urls", []),
+        phoneNumbers=intel.get("phone_numbers", []),
+        suspiciousKeywords=intel.get("tactics", []),
+    )
+
+
+def _maybe_send_callback(
+    session_id: str,
+    scam_detected: bool,
+    total_messages: int,
+    intel_payload: IntelligencePayload,
+    agent_notes: str,
+):
+    if not settings.CALLBACK_ENABLED:
+        return
+    if not scam_detected:
+        return
+    if total_messages < settings.CALLBACK_MIN_TURNS:
+        return
+    if session_id in callback_sent:
+        return
+
+    payload = {
+        "sessionId": session_id,
+        "scamDetected": scam_detected,
+        "totalMessagesExchanged": total_messages,
+        "extractedIntelligence": {
+            "bankAccounts": intel_payload.bankAccounts,
+            "upiIds": intel_payload.upiIds,
+            "phishingLinks": intel_payload.phishingLinks,
+            "phoneNumbers": intel_payload.phoneNumbers,
+            "suspiciousKeywords": intel_payload.suspiciousKeywords,
+        },
+        "agentNotes": agent_notes,
+    }
+
+    try:
+        requests.post(settings.CALLBACK_URL, json=payload, timeout=5)
+        callback_sent.add(session_id)
+    except Exception:
+        pass
 
 
 # --------------------------------------------------
@@ -178,6 +229,129 @@ def detect_scam(request: ScamCheckRequest):
         intelligence=intel,
         analyst_summary=analyst_summary
     )
+
+
+# --------------------------------------------------
+# Hackathon Honeypot endpoint (required schema)
+# --------------------------------------------------
+@app.post("/honeypot", response_model=HoneypotResponse, dependencies=[Depends(require_api_key)])
+def honeypot_endpoint(request: HoneypotRequest):
+    session_id = request.sessionId
+    incoming_text = request.message.text.strip()
+
+    # Rebuild memory from provided history if available
+    if request.conversationHistory:
+        conversation_memory[session_id] = []
+        for msg in request.conversationHistory:
+            role = "scammer" if msg.sender == "scammer" else "agent"
+            conversation_memory[session_id].append({
+                "role": role,
+                "content": msg.text
+            })
+    else:
+        conversation_memory.setdefault(session_id, [])
+
+    # Append latest message
+    conversation_memory[session_id].append({
+        "role": "scammer" if request.message.sender == "scammer" else "agent",
+        "content": incoming_text
+    })
+
+    # Stage-1: Scam classification
+    result = classify_message(incoming_text)
+
+    # Intelligence extraction (use full context if provided)
+    all_text = " ".join([m["content"] for m in conversation_memory[session_id]])
+    intel = extract_intelligence(all_text)
+    intel_payload = _build_intel_payload(intel)
+
+    # Agent controller
+    risk_score = result["risk"]
+    if risk_score > 0.7:
+        risk_level = "high"
+    elif risk_score > 0.4:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    agent_mode = decide_agent_mode(
+        risk_level=risk_level,
+        turns=len(conversation_memory[session_id])
+    )
+
+    # Stage-2: Agent reply
+    reply_result = generate_passive_reply(
+        last_message=incoming_text,
+        conversation_id=session_id,
+        risk=risk_score,
+        agent_mode=agent_mode,
+        memory=conversation_memory[session_id]
+    )
+
+    conversation_memory[session_id].append({
+        "role": "agent",
+        "content": reply_result["reply"]
+    })
+
+    total_messages = len(conversation_memory[session_id])
+    agent_notes = "Scam tactics detected: " + ", ".join(intel.get("tactics", [])) if intel.get("tactics") else "No strong scam tactics detected yet"
+
+    # Optional analyst summary to improve notes
+    if result["confidence"] > 0.85 or intel_payload.phishingLinks or intel_payload.upiIds:
+        analyst_summary = analyze_intelligence(intel)
+        if isinstance(analyst_summary, dict) and analyst_summary.get("recommended_strategy"):
+            agent_notes = analyst_summary.get("recommended_strategy")
+
+    _maybe_send_callback(
+        session_id=session_id,
+        scam_detected=result["is_scam"],
+        total_messages=total_messages,
+        intel_payload=intel_payload,
+        agent_notes=agent_notes,
+    )
+
+    return HoneypotResponse(
+        status="success",
+        reply=reply_result["reply"]
+    )
+# --------------------------------------------------
+# Hackathon schema endpoint
+# --------------------------------------------------
+@app.post("/hackathon/detect", response_model=HackathonResponse, dependencies=[Depends(require_api_key)])
+def hackathon_detect(req: HackathonRequest):
+    """
+    Accepts the hackathon's input schema and returns a minimal reply object.
+    Uses the same pipeline components under the hood.
+    """
+    session_id = req.sessionId
+    latest_text = req.message.text.strip()
+
+    # Map hackathon history into our memory format
+    memory = []
+    for m in req.conversationHistory[-6:]:
+        memory.append({
+            "role": "scammer" if m.sender == "scammer" else "agent",
+            "content": m.text
+        })
+
+    # Classify and extract
+    result = classify_message(latest_text)
+    intel = extract_intelligence(latest_text)
+
+    risk_score = result["risk"]
+    risk_level = "high" if risk_score > 0.7 else ("medium" if risk_score > 0.4 else "low")
+    agent_mode = decide_agent_mode(risk_level=risk_level, turns=len(memory))
+
+    reply_result = generate_passive_reply(
+        last_message=latest_text,
+        conversation_id=session_id,
+        risk=risk_score,
+        agent_mode=agent_mode,
+        memory=memory
+    )
+
+    return HackathonResponse(status="success", reply=reply_result["reply"]) 
+
 # --------------------------------------------------
 # Health Check Endpoint
 # --------------------------------------------------

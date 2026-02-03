@@ -37,6 +37,14 @@ def generate_passive_reply(
     # ---------------------------------------------
     # Build dynamic prompt
     # ---------------------------------------------
+    extraction_guidance = ""
+    if risk is not None and risk >= 0.6:
+        extraction_guidance = """
+Goal (high-risk): keep them talking and politely ask for details that help you "verify",
+like the official website/link, UPI/payment ID, bank account number, phone number, or email.
+Do NOT provide any personal or banking details yourself.
+"""
+
     prompt = f"""
 You are a cautious, slightly confused human.
 You are not sure if the other person is legitimate.
@@ -57,6 +65,7 @@ Instructions:
 - Do NOT accuse
 - Do NOT warn
 - Do NOT provide sensitive information
+{extraction_guidance}
 """
 
     try:
