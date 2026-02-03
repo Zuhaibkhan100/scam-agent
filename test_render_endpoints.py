@@ -32,7 +32,9 @@ def test_render_endpoints():
     endpoints_to_test = [
         "/",
         "/detect",
-        "/honeypot"
+        "/honeypot",
+        "/honeypot/message",
+        "/hackathon/detect",
     ]
     
     print("🌍 TESTING RENDER ENDPOINTS")
@@ -62,7 +64,8 @@ def test_render_endpoints():
     
     print(f"\n📋 CORRECT URLS TO USE ON HACKATHON WEBSITE:")
     print(f"1. https://scam-agent.onrender.com/")
-    print(f"2. https://scam-agent.onrender.com/detect")
+    print(f"2. https://scam-agent.onrender.com/honeypot/message")
+    print(f"3. https://scam-agent.onrender.com/detect")
 
 if __name__ == "__main__":
     test_render_endpoints()

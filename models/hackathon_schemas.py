@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 
-
 class MessageModel(BaseModel):
     sender: Literal["scammer", "user"] = Field(...)
     text: str = Field(...)

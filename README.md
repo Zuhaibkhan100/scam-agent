@@ -13,7 +13,7 @@ FastAPI service aligned to the hackathon requirements:
 - Header: `Content-Type: application/json`
 
 **Hackathon Entry Endpoints**
-All of these accept the required request schema and return exactly `{status, reply}`:
+All of these accept the required request schema:
 - `POST /`
 - `POST /detect`
 - `POST /honeypot`
@@ -97,4 +97,3 @@ curl -X POST http://127.0.0.1:8000/honeypot/message \
     "metadata": {"channel": "SMS", "language": "English", "locale": "IN"}
   }'
 ```
-

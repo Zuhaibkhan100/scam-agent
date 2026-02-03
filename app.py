@@ -115,6 +115,16 @@ def _maybe_send_callback(
     if total_messages_exchanged < settings.CALLBACK_MIN_TURNS:
         return
 
+    # Only send once we have extracted something useful (even keywords/tactics count).
+    if not (
+        intel_payload.bankAccounts
+        or intel_payload.upiIds
+        or intel_payload.phishingLinks
+        or intel_payload.phoneNumbers
+        or intel_payload.suspiciousKeywords
+    ):
+        return
+
     payload = {
         "sessionId": session_id,
         "scamDetected": True,
@@ -135,6 +145,7 @@ def _maybe_send_callback(
                 response = requests.post(settings.CALLBACK_URL, json=payload, timeout=5)
                 if 200 <= response.status_code < 300:
                     _callback_sent.add(session_id)
+                    print(f"Callback sent successfully for session {session_id}")
                     return
 
                 # Best-effort: do not fail the API response.
