@@ -229,6 +229,12 @@ def root(req: HackathonRequest, background_tasks: BackgroundTasks) -> HackathonR
     return _handle_message_event(req, background_tasks)
 
 
+@app.get("/")
+def root_get() -> dict:
+    # Render/uptime checks often use GET/HEAD /. Keep this separate from POST /.
+    return {"status": "ok", "service": "agentic-honeypot", "version": app.version}
+
+
 @app.post("/detect", response_model=HackathonResponse, dependencies=[Depends(require_api_key)])
 def detect(req: HackathonRequest, background_tasks: BackgroundTasks) -> HackathonResponse:
     return _handle_message_event(req, background_tasks)
