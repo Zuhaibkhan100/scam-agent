@@ -35,7 +35,7 @@ class Settings:
     # Optional: provider name (useful later for switching)
     LLM_PROVIDER: str = os.getenv(
         "LLM_PROVIDER",
-        "gemini"
+        "mock"
     )
 
     # ---------------------------

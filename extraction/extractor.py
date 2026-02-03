@@ -20,7 +20,10 @@ TACTIC_KEYWORDS = {
         "bank", "support", "official", "team", "department"
     ],
     "threat": [
-        "blocked", "suspended", "closed", "limited"
+        "blocked", "account blocked", "suspended", "account suspended", "closed", "limited"
+    ],
+    "verification": [
+        "verify", "verify now", "verification", "confirm", "update", "kyc"
     ],
     "reward": [
         "prize", "refund", "cashback", "won"
@@ -53,11 +56,14 @@ def extract_intelligence(text: str) -> dict:
     phone_numbers = re.findall(PHONE_PATTERN, text)
     bank_accounts = re.findall(BANK_ACCOUNT_PATTERN, text)
 
-    # Detect scam tactics
+    # Detect scam tactics + the specific keywords/phrases that triggered them
     tactics = []
+    suspicious_keywords = []
     for tactic, keywords in TACTIC_KEYWORDS.items():
-        if any(keyword in text_lower for keyword in keywords):
+        matched = [kw for kw in keywords if kw in text_lower]
+        if matched:
             tactics.append(tactic)
+            suspicious_keywords.extend(matched)
 
     # Detect impersonation type
     impersonation = None
@@ -75,5 +81,6 @@ def extract_intelligence(text: str) -> dict:
         "phone_numbers": phone_numbers,
         "bank_accounts": bank_accounts,
         "tactics": tactics,
+        "suspicious_keywords": suspicious_keywords,
         "impersonation": impersonation
     }

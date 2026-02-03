@@ -5,7 +5,7 @@ from typing import List, Optional, Literal
 class MessageModel(BaseModel):
     sender: Literal["scammer", "user"] = Field(...)
     text: str = Field(...)
-    timestamp: Optional[int] = Field(None, description="Epoch ms")
+    timestamp: int = Field(..., description="Epoch time format in ms")
 
 
 class MetadataModel(BaseModel):

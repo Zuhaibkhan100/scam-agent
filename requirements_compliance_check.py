@@ -54,7 +54,7 @@ def check_api_request_format():
     print("   - sessionId: REQUIRED ✅")
     print("   - message.sender: REQUIRED (scammer/user) ✅") 
     print("   - message.text: REQUIRED ✅")
-    print("   - message.timestamp: OPTIONAL ✅")
+    print("   - message.timestamp: REQUIRED ✅")
     print("   - conversationHistory: OPTIONAL (empty array for first message) ✅")
     print("   - metadata: OPTIONAL ✅")
     

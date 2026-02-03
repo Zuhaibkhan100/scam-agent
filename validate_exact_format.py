@@ -104,8 +104,10 @@ def test_exact_hackathon_format():
         "sessionId": "test-123",
         "message": {
             "sender": "scammer",
-            "text": "Test"
-        }
+            "text": "Test",
+            "timestamp": 1770005528731
+        },
+        "conversationHistory": []
     }
     
     try:
@@ -119,8 +121,10 @@ def test_exact_hackathon_format():
         "sessionId": "test-456",
         "message": {
             "sender": "invalid",  # Should be "scammer" or "user"
-            "text": "Test"
-        }
+            "text": "Test",
+            "timestamp": 1770005528731
+        },
+        "conversationHistory": []
     }
     
     try:

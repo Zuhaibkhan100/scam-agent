@@ -4,6 +4,7 @@ Test different endpoint paths that the hackathon might expect
 """
 import requests
 import json
+import time
 
 def test_all_endpoints():
     base_url = "http://localhost:8000"
@@ -18,20 +19,20 @@ def test_all_endpoints():
         "sessionId": "test-endpoint",
         "message": {
             "sender": "scammer",
-            "text": "Test message for endpoint testing"
-        }
+            "text": "Test message for endpoint testing",
+            "timestamp": int(time.time() * 1000),
+        },
+        "conversationHistory": [],
+        "metadata": {"channel": "SMS", "language": "English", "locale": "IN"},
     }
     
     # List of possible endpoints the hackathon might expect
     endpoints = [
         "/",           # Root
-        "/api",        # API base
         "/detect",     # Detect endpoint
         "/honeypot",   # Honeypot endpoint
-        "/api/detect", # API with detect
-        "/api/honeypot", # API with honeypot
-        "/hackathon",  # Hackathon endpoint
-        "/webhook",    # Webhook endpoint
+        "/honeypot/message",  # Honeypot submission endpoint
+        "/hackathon/detect",  # Alternative hackathon endpoint
     ]
     
     print("Testing different endpoint paths...")

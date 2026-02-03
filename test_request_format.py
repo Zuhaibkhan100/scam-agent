@@ -35,8 +35,10 @@ def test_different_formats():
         "sessionId": "test-123",
         "message": {
             "sender": "scammer",
-            "text": "Test message"
-        }
+            "text": "Test message",
+            "timestamp": 1770005528731
+        },
+        "conversationHistory": []
     }
     
     # Test 3: Without metadata
@@ -81,8 +83,10 @@ def test_header_variations():
         "sessionId": "test-789",
         "message": {
             "sender": "scammer",
-            "text": "Test message"
-        }
+            "text": "Test message",
+            "timestamp": 1770005528731
+        },
+        "conversationHistory": []
     }
     
     # Test different header key formats

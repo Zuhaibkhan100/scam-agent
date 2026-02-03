@@ -57,8 +57,10 @@ def test_minimal_payload():
         "sessionId": "test-123",
         "message": {
             "sender": "scammer", 
-            "text": "Test message"
-        }
+            "text": "Test message",
+            "timestamp": 1770005528731
+        },
+        "conversationHistory": []
     }
     
     try:

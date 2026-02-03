@@ -4,6 +4,7 @@ Quick test to verify endpoints work
 """
 import requests
 import json
+import time
 
 def quick_test():
     base_url = "http://localhost:8000"
@@ -18,8 +19,10 @@ def quick_test():
         "sessionId": "quick-test",
         "message": {
             "sender": "scammer",
-            "text": "Urgent: Your account will be blocked"
-        }
+            "text": "Urgent: Your account will be blocked",
+            "timestamp": int(time.time() * 1000),
+        },
+        "conversationHistory": [],
     }
     
     endpoints_to_test = [

@@ -1,64 +1,26 @@
-# Agentic Honey-Pot Scam Classification API
+# Agentic Honey-Pot for Scam Detection & Intelligence Extraction
 
-A FastAPI-based service for detecting scams, generating victim replies, and extracting intelligence. **GUVI-compliant** with mandatory callback for evaluation.
+FastAPI service aligned to the hackathon requirements:
+- Accepts incoming message events (with `sessionId`, `message`, `conversationHistory`, `metadata`)
+- Detects scam intent
+- Engages autonomously with a human-like persona (multi-turn via `conversationHistory`)
+- Extracts scam intelligence (UPI IDs, links, phone numbers, bank accounts, suspicious keywords)
+- Returns a minimal JSON response: `{ "status": "success", "reply": "..." }`
+- Sends the mandatory final callback to the GUVI evaluation endpoint (best-effort, once per session)
 
-## Architecture
+**Authentication**
+- Header: `x-api-key: YOUR_SECRET_API_KEY`
+- Header: `Content-Type: application/json`
 
-This system is a **stateless agent node** orchestrated by GUVI:
-- GUVI controls the conversation lifecycle
-- GUVI sends `conversationHistory` with each request
-- Your system classifies, replies, extracts intelligence, and sends a final callback
-- No internal session management required
+**Hackathon Entry Endpoints**
+All of these accept the required request schema and return exactly `{status, reply}`:
+- `POST /`
+- `POST /detect`
+- `POST /honeypot`
+- `POST /honeypot/message`
+- `POST /hackathon/detect`
 
-## Features
-
-- **Stage-1**: AI-powered scam classification with confidence scoring
-- **Stage-2**: Human-like victim agent reply generation
-- **Stage-3**: Intelligence extraction (URLs, UPI IDs, phone numbers, tactics)
-- **Callback**: Mandatory final result submission to GUVI evaluation endpoint
-- API key authentication
-- Free mode: Uses heuristic classification (no paid LLM required)
-- Paid mode: Optional Google Gemini integration for higher accuracy
-
-## Local Development
-
-1. Clone the repo
-2. Copy `.env.example` to `.env`
-3. Install dependencies: `pip install -r requirements.txt`
-4. Run: `uvicorn app:app --reload`
-5. Test with: `python chat_simulator.py` or API tools
-
-## Deployment on Render
-
-1. Push code to GitHub
-2. Connect Render account to GitHub repo
-3. Create new **Web Service**
-4. Settings:
-   - **Runtime**: Python 3
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `uvicorn app:app --host 0.0.0.0 --port $PORT`
-5. Environment Variables (required):
-   - `API_KEY`: Your chosen API key (e.g., `honeypot-2026-02-03`)
-   - `LLM_PROVIDER`: `mock` (free) or `gemini` (requires GEMINI_API_KEY)
-   - `CALLBACK_ENABLED`: `true`
-   - `CALLBACK_MIN_TURNS`: `2` (ensures callback fires during evaluation)
-6. Optional:
-   - `GEMINI_API_KEY`: Your Google Gemini API key (only if using gemini provider)
-   - `LLM_MODEL_NAME`: `gemini-2.5-flash-lite`
-7. Deploy
-
-## GUVI Hackathon Integration
-
-### Submission Endpoint
-
-Use this endpoint URL in the GUVI platform:
-
-```
-POST https://your-app.onrender.com/honeypot/message
-```
-
-### Request Format
-
+**Request Format (Input)**
 ```json
 {
   "sessionId": "wertyu-dfghj-ertyui",
@@ -76,8 +38,7 @@ POST https://your-app.onrender.com/honeypot/message
 }
 ```
 
-### Response Format
-
+**Response Format (Output)**
 ```json
 {
   "status": "success",
@@ -85,59 +46,49 @@ POST https://your-app.onrender.com/honeypot/message
 }
 ```
 
-### Authentication
-
-- Header: `X-API-Key: your-api-key`
+**Mandatory Final Result Callback**
+- Endpoint: `POST https://hackathon.guvi.in/api/updateHoneyPotFinalResult`
 - Content-Type: `application/json`
+- Sent once per session when:
+  1. Scam intent is confirmed (`scamDetected = true`)
+  2. Engagement depth is sufficient (`totalMessagesExchanged >= CALLBACK_MIN_TURNS`)
 
-### Mandatory Callback
-
-Your system automatically sends a final callback to:
-```
-POST https://hackathon.guvi.in/api/updateHoneyPotFinalResult
-```
-
-When:
-- Scam is detected AND
-- Engagement depth ≥ CALLBACK_MIN_TURNS (default: 2) AND
-- Intelligence signals extracted (URLs, UPI IDs, phone numbers, etc.)
-
-Payload:
+Example payload:
 ```json
 {
-  "sessionId": "...",
+  "sessionId": "abc123-session-id",
   "scamDetected": true,
-  "totalMessagesExchanged": 4,
+  "totalMessagesExchanged": 18,
   "extractedIntelligence": {
-    "bankAccounts": [],
+    "bankAccounts": ["XXXX-XXXX-XXXX"],
     "upiIds": ["scammer@upi"],
-    "phishingLinks": ["http://malicious.com"],
+    "phishingLinks": ["http://malicious-link.example"],
     "phoneNumbers": ["+91XXXXXXXXXX"],
-    "suspiciousKeywords": ["urgent", "verify", "blocked"]
+    "suspiciousKeywords": ["urgent", "verify now", "account blocked"]
   },
-  "agentNotes": "Scam tactics: urgency, authority. Engagement depth: 4 turns."
+  "agentNotes": "Scammer used urgency tactics and payment redirection"
 }
 ```
 
-## API Endpoints
+**Configuration (.env)**
+- `API_KEY` (required): the value expected in the `x-api-key` header
+- `LLM_PROVIDER` (optional): `mock` (default) or `gemini`
+- `GEMINI_API_KEY` (required if `LLM_PROVIDER=gemini`)
+- `LLM_MODEL_NAME` (optional): Gemini model name
+- `CALLBACK_ENABLED` (optional): `true`/`false` (default: `true`)
+- `CALLBACK_URL` (optional): defaults to the GUVI endpoint
+- `CALLBACK_MIN_TURNS` (optional): minimum `totalMessagesExchanged` before callback (default: `2`)
 
-- `POST /honeypot/message`: **GUVI submission endpoint** (stateless, callback-enabled)
-- `POST /detect`: Original endpoint (backward compatible, internal memory)
-- `POST /victim_reply`: Reply generation only
-- `GET /memory/{conversation_id}`: Debug conversation memory (for /detect only)
-- `GET /health`: Health check
-
-## Testing Locally
-
-Health check:
+**Run Locally**
 ```bash
-curl https://your-app.onrender.com/health
+pip install -r requirements.txt
+uvicorn app:app --reload
 ```
 
-Test honeypot endpoint:
+**Quick Test**
 ```bash
-curl -X POST https://your-app.onrender.com/honeypot/message \
-  -H "X-API-Key: honeypot-2026-02-03" \
+curl -X POST http://127.0.0.1:8000/honeypot/message \
+  -H "x-api-key: honeypot-2026-02-03" \
   -H "Content-Type: application/json" \
   -d '{
     "sessionId": "test-1",
@@ -147,9 +98,3 @@ curl -X POST https://your-app.onrender.com/honeypot/message \
   }'
 ```
 
-## Security Notes
-
-- Change default `API_KEY` in production
-- Restrict CORS origins if needed
-- Callback is sent asynchronously; failures are logged but don't block the response
-- Free mode (mock provider) has no external dependencies; paid mode requires Gemini API key
