@@ -321,6 +321,17 @@ def honeypot_endpoint(request: HoneypotRequest):
         agentNotes=agent_notes
     )
 # --------------------------------------------------
+# Alternative Main Endpoint (/detect) - Common hackathon path
+# --------------------------------------------------
+@app.post("/detect", response_model=HackathonResponse, dependencies=[Depends(require_api_key)])
+def detect_endpoint(req: HackathonRequest):
+    """
+    Alternative endpoint at /detect path for hackathon compatibility.
+    Identical functionality to main endpoint.
+    """
+    return main_honeypot_endpoint(req)
+
+# --------------------------------------------------
 # Main Hackathon Endpoint (Primary Entry Point)
 # --------------------------------------------------
 @app.post("/", response_model=HackathonResponse, dependencies=[Depends(require_api_key)])
