@@ -18,6 +18,25 @@ def _mock_reply(last_message: str, agent_mode: str, memory: list | None, risk: f
             return "Okay. Can you tell me what this is regarding?"
         return "Sorry, I'm not sure I understand. What is this regarding?"
 
+    asked_link = False
+    asked_phone = False
+    asked_email = False
+    asked_ref = False
+
+    if memory:
+        for t in memory[-10:]:
+            if t.get("role") != "agent":
+                continue
+            msg = str(t.get("content", "")).lower()
+            if "official website" in msg or "website link" in msg:
+                asked_link = True
+            if "helpline" in msg or "number i should call" in msg or "contact number" in msg:
+                asked_phone = True
+            if "official email" in msg or "email address" in msg:
+                asked_email = True
+            if "reference" in msg or "ticket number" in msg:
+                asked_ref = True
+
     scammer_only = []
     if memory:
         scammer_only = [str(t.get("content", "")) for t in memory[-6:] if t.get("role") == "scammer"]
@@ -30,16 +49,17 @@ def _mock_reply(last_message: str, agent_mode: str, memory: list | None, risk: f
     has_email = bool(intel.get("emails"))
     has_upi = bool(intel.get("upi_ids"))
 
-    if not has_link:
+    # Rotate questions to keep engagement and avoid repeating the exact same ask.
+    if not has_link and not asked_link:
         ask = "Can you send me the official website link you're asking me to use?"
-    elif not has_phone:
+    elif not has_phone and not asked_phone:
         ask = "What's the official helpline number I should call to verify this?"
-    elif not has_email:
+    elif not has_email and not asked_email:
         ask = "Can you share the official email address for this so I can cross-check?"
-    elif not has_upi and any(k in all_text.lower() for k in ["upi", "payment", "pay"]):
-        ask = "Which UPI ID should I be checking this against?"
-    else:
+    elif not has_upi and any(k in all_text.lower() for k in ["upi", "payment", "pay"]) and not asked_ref:
         ask = "Do you have a reference ID or ticket number for this?"
+    else:
+        ask = "Can you repeat the exact steps you want me to follow so I don't do it wrong?"
 
     if agent_mode == "stall":
         prefix = "Okay, give me a moment."

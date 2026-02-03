@@ -83,13 +83,29 @@ def _heuristic_classify(text: str) -> dict[str, Any]:
 
     has_link = bool(re.search(r"https?://", tl))
     has_upi = bool(re.search(r"\b[\w.\-]{2,}@[a-zA-Z]{2,}\b", t))  # UPI-like
+    has_phone = bool(re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", t))
     has_credentials = any(k in tl for k in ["otp", "one time password", "pin", "cvv", "password"])
 
-    has_urgency = any(k in tl for k in ["urgent", "immediately", "now", "today", "asap", "right away"])
+    has_urgency = any(k in tl for k in ["urgent", "immediately", "today", "asap", "right away", "act now", "within"])
     has_threat = any(k in tl for k in ["blocked", "suspended", "freeze", "closed", "limited", "deactivated"])
-    has_verification = any(k in tl for k in ["verify", "verification", "kyc", "update", "confirm", "click", "login"])
+    has_verification = any(
+        k in tl
+        for k in [
+            "verify",
+            "verification",
+            "verify now",
+            "verify immediately",
+            "kyc",
+            "update kyc",
+            "update",
+            "confirm",
+            "click",
+            "login",
+        ]
+    )
     has_financial = any(k in tl for k in ["bank", "account", "upi", "card", "payment", "wallet"])
     has_reward = any(k in tl for k in ["refund", "cashback", "prize", "won", "offer"])
+    has_payment_action = any(k in tl for k in ["share your upi", "upi id", "collect request", "transfer", "send money", "pay now"])
 
     # Weighted probability score (probability-of-scam)
     score = 0.05
@@ -103,6 +119,9 @@ def _heuristic_classify(text: str) -> dict[str, Any]:
     if has_upi:
         score += 0.40
         indicators.append("contains a payment/UPI id")
+    if has_phone:
+        score += 0.25
+        indicators.append("contains a phone number")
 
     if has_financial:
         score += 0.10
@@ -119,6 +138,9 @@ def _heuristic_classify(text: str) -> dict[str, Any]:
     if has_reward:
         score += 0.15
         indicators.append("reward lure")
+    if has_payment_action:
+        score += 0.25
+        indicators.append("payment redirection")
 
     score = max(0.0, min(score, 0.95))
 

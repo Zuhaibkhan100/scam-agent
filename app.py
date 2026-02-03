@@ -115,15 +115,8 @@ def _maybe_send_callback(
     if total_messages_exchanged < settings.CALLBACK_MIN_TURNS:
         return
 
-    # Only send once we have extracted something useful (even keywords/tactics count).
-    if not (
-        intel_payload.bankAccounts
-        or intel_payload.upiIds
-        or intel_payload.phishingLinks
-        or intel_payload.phoneNumbers
-        or intel_payload.suspiciousKeywords
-    ):
-        return
+    # Even if intelligence is currently empty, still send the callback once the
+    # engagement threshold is met (arrays can be empty; callback is mandatory for scoring).
 
     payload = {
         "sessionId": session_id,
