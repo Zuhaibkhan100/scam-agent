@@ -95,10 +95,14 @@ def _maybe_send_callback(
     }
 
     try:
-        requests.post(settings.CALLBACK_URL, json=payload, timeout=5)
-        callback_sent.add(session_id)
-    except Exception:
-        pass
+        response = requests.post(settings.CALLBACK_URL, json=payload, timeout=5)
+        if response.status_code == 200:
+            callback_sent.add(session_id)
+            print(f"✅ Callback sent successfully for session {session_id}")
+        else:
+            print(f"❌ Callback failed for session {session_id}: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"❌ Callback error for session {session_id}: {e}")
 
 
 # --------------------------------------------------
