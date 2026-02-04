@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 import requests
@@ -38,12 +38,15 @@ app.add_middleware(
 # --------------------------------------------------
 def require_api_key(
     x_api_key: str | None = Header(None, alias="x-api-key"),
+    api_key: str | None = Header(None, alias="api-key"),
+    apikey: str | None = Header(None, alias="apikey"),
+    api_key_q: str | None = Query(None, alias="api_key"),
     authorization: str | None = Header(None, alias="authorization"),
 ) -> None:
     if not settings.API_KEY:
         raise HTTPException(status_code=500, detail="Server API key not configured")
 
-    provided = x_api_key
+    provided = x_api_key or api_key or apikey or api_key_q
     if not provided and authorization:
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
