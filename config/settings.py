@@ -48,6 +48,12 @@ class Settings:
         os.getenv("LLM_COOLDOWN_SECONDS", "2")
     )
 
+    # Hard timeout for any single LLM request (seconds).
+    # If exceeded, the API will fall back to deterministic heuristics/text.
+    LLM_REQUEST_TIMEOUT_SECONDS: float = float(
+        os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "10")
+    )
+
     # ---------------------------
     # Fallback behavior
     # ---------------------------

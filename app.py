@@ -39,11 +39,20 @@ app.add_middleware(
 # --------------------------------------------------
 # API key auth (require: x-api-key header)
 # --------------------------------------------------
-def require_api_key(x_api_key: str | None = Header(None, alias="x-api-key")) -> None:
+def require_api_key(
+    x_api_key: str | None = Header(None, alias="x-api-key"),
+    authorization: str | None = Header(None, alias="authorization"),
+) -> None:
     if not settings.API_KEY:
         raise HTTPException(status_code=500, detail="Server API key not configured")
 
-    if x_api_key != settings.API_KEY:
+    provided = x_api_key
+    if not provided and authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            provided = parts[1].strip()
+
+    if provided != settings.API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 

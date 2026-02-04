@@ -7,6 +7,81 @@ PASSIVE_FALLBACK_REPLY = (
 )
 
 
+def _is_greeting(text: str) -> bool:
+    tl = (text or "").strip().lower()
+    if not tl:
+        return False
+    greetings = [
+        "hi",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "how are you",
+        "how r u",
+        "how are u",
+        "howru",
+        "hru",
+    ]
+    return any(g in tl for g in greetings) and len(tl.split()) <= 18
+
+
+def _low_risk_reply(last_message: str, agent_mode: str, memory: list | None) -> str:
+    """
+    Low-risk replies should still be "agentic":
+    - respond naturally to greetings/introductions
+    - ask what this is regarding
+    - gently steer toward verifiable details without accusing
+    """
+    tl = (last_message or "").strip().lower()
+
+    mentioned_bank = any(k in tl for k in ["bank", "sbi", "icici", "hdfc", "axis", "kotak"])
+    mentioned_support = any(k in tl for k in ["support", "customer care", "helpdesk", "helpline", "service"])
+    mentioned_account = "account" in tl
+
+    already_asked_purpose = False
+    already_asked_official = False
+    if memory:
+        for t in memory[-6:]:
+            if t.get("role") != "agent":
+                continue
+            msg = str(t.get("content", "")).lower()
+            if "what is this regarding" in msg or "what's this about" in msg:
+                already_asked_purpose = True
+            if "official" in msg and ("link" in msg or "number" in msg or "helpline" in msg):
+                already_asked_official = True
+
+    if agent_mode == "escalate":
+        if mentioned_bank or mentioned_account or mentioned_support:
+            return (
+                "Hi. I can’t discuss any account details over messages. "
+                "Please share the official helpline number or an official website link so I can verify."
+            )
+        return "Hi. What is this about?"
+
+    if _is_greeting(last_message):
+        if (mentioned_bank or mentioned_account or mentioned_support) and not already_asked_official:
+            return (
+                "Hi. I’m okay. What is this about? "
+                "If it’s regarding my bank account, please share the official helpline number or website so I can verify."
+            )
+        if not already_asked_purpose:
+            return "Hi. I’m okay. What is this about?"
+        return "Hi. Can you share more details on what this is regarding?"
+
+    if (mentioned_bank or mentioned_account or mentioned_support) and not already_asked_official:
+        return (
+            "Okay. Which bank is this regarding, and what exactly do you need? "
+            "Please share an official helpline number or website link so I can verify first."
+        )
+
+    if not already_asked_purpose:
+        return "Sorry, I’m not sure I follow. What is this regarding?"
+
+    return "Can you clarify what you need me to do?"
+
+
 def _mock_reply(last_message: str, agent_mode: str, memory: list | None, risk: float | None) -> str:
     """
     Deterministic fallback for LLM_PROVIDER=mock.
@@ -15,8 +90,8 @@ def _mock_reply(last_message: str, agent_mode: str, memory: list | None, risk: f
     # Low-risk: stay generic to avoid overfitting or "investigative" language.
     if risk is None or risk < 0.6:
         if agent_mode == "stall":
-            return "Okay. Can you tell me what this is regarding?"
-        return "Sorry, I'm not sure I understand. What is this regarding?"
+            return _low_risk_reply(last_message=last_message, agent_mode="stall", memory=memory)
+        return _low_risk_reply(last_message=last_message, agent_mode=agent_mode, memory=memory)
 
     asked_link = False
     asked_phone = False

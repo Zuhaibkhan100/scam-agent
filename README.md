@@ -85,6 +85,11 @@ pip install -r requirements.txt
 uvicorn app:app --reload
 ```
 
+**Deploy on Render (important)**
+- Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- Environment vars: `API_KEY` (required), `LLM_PROVIDER` (`mock` recommended for speed), `GEMINI_API_KEY` (only if `LLM_PROVIDER=gemini`)
+- If you see 30s timeouts from the evaluator, verify the service is awake (Render free tier can sleep) and that you are binding to `$PORT`.
+
 **Quick Test**
 ```bash
 curl -X POST http://127.0.0.1:8000/honeypot/message \

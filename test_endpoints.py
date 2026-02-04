@@ -19,7 +19,7 @@ def test_all_endpoints():
         "sessionId": "test-endpoint",
         "message": {
             "sender": "scammer",
-            "text": "Test message for endpoint testing",
+            "text": "Can you send your personal details regarding bank ;)",
             "timestamp": int(time.time() * 1000),
         },
         "conversationHistory": [],

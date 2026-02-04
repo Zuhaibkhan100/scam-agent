@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import json
 import re
 import time
@@ -19,6 +20,26 @@ _LAST_CALL_TS_REPLY = 0.0
 
 _GEMINI_MODEL: Any | None = None
 _GEMINI_INIT_ATTEMPTED = False
+
+_GEMINI_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
+
+def _generate_content_with_timeout(model: Any, prompt: str) -> Any | None:
+    """
+    Best-effort timeout wrapper around `model.generate_content`.
+    Returns None on timeout/failure.
+    """
+    timeout_s = float(getattr(settings, "LLM_REQUEST_TIMEOUT_SECONDS", 10))
+    if timeout_s <= 0:
+        timeout_s = 10
+
+    future = _GEMINI_EXECUTOR.submit(model.generate_content, prompt)
+    try:
+        return future.result(timeout=timeout_s)
+    except FuturesTimeoutError:
+        return None
+    except Exception:
+        return None
 
 
 def _gemini_enabled() -> bool:
@@ -181,7 +202,9 @@ def call_llm(prompt: str) -> dict[str, Any]:
         return fallback
 
     try:
-        response = model.generate_content(prompt)
+        response = _generate_content_with_timeout(model, prompt)
+        if response is None:
+            return fallback
         _LAST_CALL_TS_CLASSIFIER = now
 
         raw_text = (response.text or "").strip()
@@ -233,7 +256,12 @@ def call_llm_for_reply(prompt: str) -> str:
         )
 
     try:
-        response = model.generate_content(prompt)
+        response = _generate_content_with_timeout(model, prompt)
+        if response is None:
+            return (
+                "Sorry, I'm not sure I understand. "
+                "Can you share the official link or contact number so I can verify?"
+            )
         _LAST_CALL_TS_REPLY = now
 
         reply = (response.text or "").strip()
