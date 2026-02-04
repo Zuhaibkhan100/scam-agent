@@ -24,12 +24,12 @@ class Settings:
     API_KEY: str = os.getenv("API_KEY", "")
 
     # Gemini model name
-    # Recommended:
-    # - gemini-1.5-flash (fast, cheap)
+    # Correct options:
+    # - gemini-1.5-flash (fast, cheap) ✅ RECOMMENDED
     # - gemini-1.5-pro (strong reasoning)
     LLM_MODEL_NAME: str = os.getenv(
         "LLM_MODEL_NAME",
-        "gemini-flash-latest"
+        "gemini-1.5-flash"  # Fixed: was gemini-flash-latest (invalid)
     )
 
     # Optional model fallbacks (comma-separated). Used if the primary model hits free-tier quota/rate limits.
@@ -61,7 +61,7 @@ class Settings:
     # Hard timeout for any single LLM request (seconds).
     # If exceeded, the API will fall back to deterministic heuristics/text.
     LLM_REQUEST_TIMEOUT_SECONDS: float = float(
-        os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "10")
+        os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "5")  # Reduced from 10 to 5
     )
 
     # If enabled, the API will NOT use deterministic/mock fallbacks when Gemini fails.
