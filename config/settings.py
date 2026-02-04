@@ -29,8 +29,18 @@ class Settings:
     # - gemini-1.5-pro (strong reasoning)
     LLM_MODEL_NAME: str = os.getenv(
         "LLM_MODEL_NAME",
-        "gemini-2.5-flash-lite"
+        "gemini-flash-latest"
     )
+
+    # Optional model fallbacks (comma-separated). Used if the primary model hits free-tier quota/rate limits.
+    # Example: "gemini-1.5-flash,gemini-1.5-flash-8b"
+    _LLM_FALLBACK_MODEL_NAMES_RAW: str = os.getenv(
+        "LLM_FALLBACK_MODEL_NAMES",
+        "gemini-2.5-flash,gemma-3-4b-it",
+    )
+    LLM_FALLBACK_MODEL_NAMES: list[str] = [
+        x.strip() for x in _LLM_FALLBACK_MODEL_NAMES_RAW.split(",") if x.strip()
+    ]
 
     # Optional: provider name (useful later for switching)
     LLM_PROVIDER: str = os.getenv(
@@ -54,6 +64,10 @@ class Settings:
         os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "10")
     )
 
+    # If enabled, the API will NOT use deterministic/mock fallbacks when Gemini fails.
+    # This can increase errors/timeouts on free tiers but guarantees "AI-only" behavior.
+    LLM_STRICT: bool = os.getenv("LLM_STRICT", "false").lower() in ("1", "true", "yes", "on")
+
     # ---------------------------
     # Fallback behavior
     # ---------------------------
@@ -72,6 +86,7 @@ class Settings:
     )
     CALLBACK_ENABLED: bool = os.getenv("CALLBACK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
     CALLBACK_MIN_TURNS: int = int(os.getenv("CALLBACK_MIN_TURNS", "2"))
+    CALLBACK_DRY_RUN: bool = os.getenv("CALLBACK_DRY_RUN", "false").lower() in ("1", "true", "yes", "on")
 
 
 # --------------------------------------------------

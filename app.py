@@ -6,12 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 import time
 
-from agent.controller import decide_agent_mode
 from config.settings import settings
-from detection.scam_classifier import classify_message
-from extraction.extractor import extract_intelligence
 from models.hackathon_schemas import HackathonRequest, HackathonResponse
-from models.honeypot_schemas import IntelligencePayload
+from reasoning.final_intelligence import generate_final_intelligence
 from reasoning.victim_agent import generate_passive_reply
 
 app = FastAPI(
@@ -62,51 +59,13 @@ def require_api_key(
 _callback_sent: set[str] = set()
 
 
-def _dedupe_preserve_order(items: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for x in items:
-        if x in seen:
-            continue
-        seen.add(x)
-        out.append(x)
-    return out
-
-
-def _build_intel_payload(intel: dict) -> IntelligencePayload:
-    return IntelligencePayload(
-        bankAccounts=_dedupe_preserve_order([str(x) for x in intel.get("bank_accounts", []) if str(x).strip()]),
-        upiIds=_dedupe_preserve_order([str(x) for x in intel.get("upi_ids", []) if str(x).strip()]),
-        phishingLinks=_dedupe_preserve_order([str(x) for x in intel.get("urls", []) if str(x).strip()]),
-        phoneNumbers=_dedupe_preserve_order([str(x) for x in intel.get("phone_numbers", []) if str(x).strip()]),
-        suspiciousKeywords=_dedupe_preserve_order(
-            [str(x) for x in intel.get("suspicious_keywords", []) if str(x).strip()]
-        ),
-    )
-
-
-def _build_agent_notes(intel: dict) -> str:
-    tactics = [str(x) for x in intel.get("tactics", []) if str(x).strip()]
-    impersonation = intel.get("impersonation")
-
-    parts: list[str] = []
-    if impersonation:
-        parts.append(f"Impersonation: {impersonation}")
-    if tactics:
-        parts.append("Tactics: " + ", ".join(tactics))
-
-    if not parts:
-        return "Engaged safely to extract scam indicators without sharing any sensitive information."
-    return "; ".join(parts)
-
-
 def _maybe_send_callback(
     *,
     session_id: str,
-    scam_detected: bool,
     total_messages_exchanged: int,
-    intel_payload: IntelligencePayload,
-    agent_notes: str,
+    conversation_history: list,
+    latest_sender: str,
+    latest_text: str,
     background_tasks: BackgroundTasks | None = None,
 ) -> None:
     """
@@ -115,8 +74,6 @@ def _maybe_send_callback(
     """
     if not settings.CALLBACK_ENABLED:
         return
-    if not scam_detected:
-        return
     if session_id in _callback_sent:
         return
 
@@ -124,24 +81,32 @@ def _maybe_send_callback(
     if total_messages_exchanged < settings.CALLBACK_MIN_TURNS:
         return
 
-    # Even if intelligence is currently empty, still send the callback once the
-    # engagement threshold is met (arrays can be empty; callback is mandatory for scoring).
-
-    payload = {
-        "sessionId": session_id,
-        "scamDetected": True,
-        "totalMessagesExchanged": int(total_messages_exchanged),
-        "extractedIntelligence": {
-            "bankAccounts": intel_payload.bankAccounts,
-            "upiIds": intel_payload.upiIds,
-            "phishingLinks": intel_payload.phishingLinks,
-            "phoneNumbers": intel_payload.phoneNumbers,
-            "suspiciousKeywords": intel_payload.suspiciousKeywords,
-        },
-        "agentNotes": agent_notes,
-    }
-
     def _post_callback() -> None:
+        try:
+            payload = generate_final_intelligence(
+                session_id=session_id,
+                total_messages_exchanged=total_messages_exchanged,
+                conversation_history=conversation_history,
+                latest_sender=latest_sender,
+                latest_text=latest_text,
+            )
+        except Exception as e:
+            print(f"Callback generation error for session {session_id}: {e}")
+            return
+
+        if not payload:
+            print(f"Callback generation returned empty payload for session {session_id}")
+            return
+
+        if not payload.get("scamDetected", False):
+            # Best-effort: only report once the model considers it a scam.
+            return
+
+        if settings.CALLBACK_DRY_RUN:
+            _callback_sent.add(session_id)
+            print(f"[DRY RUN] Callback payload for session {session_id}: {payload}")
+            return
+
         for attempt in range(2):
             try:
                 response = requests.post(settings.CALLBACK_URL, json=payload, timeout=5)
@@ -188,33 +153,15 @@ def _handle_message_event(req: HackathonRequest, background_tasks: BackgroundTas
         for m in req.conversationHistory
     ]
 
-    # Always extract intelligence from full context (history + latest message).
-    all_text = " ".join(
-        [(m.text or "") for m in req.conversationHistory if m.sender == "scammer"] + [latest_text]
-    ).strip()
-    intel = extract_intelligence(all_text)
-    intel_payload = _build_intel_payload(intel)
-    agent_notes = _build_agent_notes(intel)
-
     # Only classify/engage as "scammer" when the platform says the latest message is from the scammer.
     if latest_sender != "scammer" or not latest_text:
         return HackathonResponse(status="success", reply="Could you share the exact message they sent you?")
 
-    scammer_context = " ".join(
-        [(m.text or "") for m in req.conversationHistory if m.sender == "scammer"][-4:] + [latest_text]
-    ).strip()
-    classification = classify_message(scammer_context)
-    scam_detected = bool(classification.get("is_scam", False))
-    risk_score = float(classification.get("risk", 0.0))
-
-    risk_level = "high" if risk_score > 0.7 else ("medium" if risk_score > 0.4 else "low")
-    agent_mode = decide_agent_mode(risk_level=risk_level, turns=len(req.conversationHistory))
-
     reply_result = generate_passive_reply(
         last_message=latest_text,
         conversation_id=session_id,
-        risk=risk_score,
-        agent_mode=agent_mode,
+        risk=None,
+        agent_mode="confused",
         memory=memory,
     )
     reply_text = (reply_result.get("reply") or "").strip() or "Sorry, can you explain that again?"
@@ -224,10 +171,10 @@ def _handle_message_event(req: HackathonRequest, background_tasks: BackgroundTas
 
     _maybe_send_callback(
         session_id=session_id,
-        scam_detected=scam_detected,
         total_messages_exchanged=total_messages_exchanged,
-        intel_payload=intel_payload,
-        agent_notes=agent_notes,
+        conversation_history=req.conversationHistory,
+        latest_sender=latest_sender,
+        latest_text=latest_text,
         background_tasks=background_tasks,
     )
 

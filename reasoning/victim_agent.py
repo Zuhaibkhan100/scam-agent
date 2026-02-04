@@ -55,7 +55,7 @@ def _low_risk_reply(last_message: str, agent_mode: str, memory: list | None) -> 
     if agent_mode == "escalate":
         if mentioned_bank or mentioned_account or mentioned_support:
             return (
-                "Hi. I can’t discuss any account details over messages. "
+                "Hi. I can't discuss any account details over messages. "
                 "Please share the official helpline number or an official website link so I can verify."
             )
         return "Hi. What is this about?"
@@ -63,11 +63,11 @@ def _low_risk_reply(last_message: str, agent_mode: str, memory: list | None) -> 
     if _is_greeting(last_message):
         if (mentioned_bank or mentioned_account or mentioned_support) and not already_asked_official:
             return (
-                "Hi. I’m okay. What is this about? "
-                "If it’s regarding my bank account, please share the official helpline number or website so I can verify."
+                "Hi. I'm okay. What is this about? "
+                "If it's regarding my bank account, please share the official helpline number or website so I can verify."
             )
         if not already_asked_purpose:
-            return "Hi. I’m okay. What is this about?"
+            return "Hi. I'm okay. What is this about?"
         return "Hi. Can you share more details on what this is regarding?"
 
     if (mentioned_bank or mentioned_account or mentioned_support) and not already_asked_official:
@@ -77,7 +77,7 @@ def _low_risk_reply(last_message: str, agent_mode: str, memory: list | None) -> 
         )
 
     if not already_asked_purpose:
-        return "Sorry, I’m not sure I follow. What is this regarding?"
+        return "Sorry, I'm not sure I follow. What is this regarding?"
 
     return "Can you clarify what you need me to do?"
 
@@ -165,8 +165,11 @@ def generate_passive_reply(
     """
 
     # If we're not using Gemini, stay deterministic but still extraction-oriented.
+    strict = bool(getattr(settings, "LLM_STRICT", False))
     use_gemini = (settings.LLM_PROVIDER or "").strip().lower() == "gemini" and bool(settings.GEMINI_API_KEY)
     if not use_gemini:
+        if strict:
+            raise RuntimeError("Gemini is required (set LLM_PROVIDER=gemini and GEMINI_API_KEY).")
         return {
             "reply": _mock_reply(last_message=last_message, agent_mode=agent_mode, memory=memory, risk=risk),
             "fallback": True,
@@ -187,45 +190,30 @@ def generate_passive_reply(
     # ---------------------------------------------
     # Build dynamic prompt
     # ---------------------------------------------
-    extraction_guidance = ""
-    if risk is not None and risk >= 0.6:
-        extraction_guidance = """
-Goal (high-risk): keep them talking and politely ask for details that help you "verify",
-like the official website/link, UPI/payment ID, bank account number, phone number, or email.
-Do NOT provide any personal or banking details yourself.
-"""
-
     prompt = f"""
-You are a cautious, slightly confused human.
+You are a cautious, slightly confused human chatting over SMS.
 You are not sure if the other person is legitimate.
-Your goal is to keep the conversation going without giving
-any personal, banking, or verification details.
+Your goal is to keep the conversation going without giving any personal, banking, or verification details.
 
 Conversation so far:
 {history_text if history_text else "(no prior context)"}
 
-Latest message from the other person:
+Latest message:
 "{last_message}"
 
-Behavior mode: {agent_mode}
-
-Instructions:
-- Sound natural and human
-- Ask for clarification if unsure
-- If you made a mistake earlier, correct yourself naturally
-- Never use words like "scam", "fraud", "phishing", or "suspicious"
-- Do NOT accuse
-- Do NOT warn
-- Do NOT provide sensitive information
-{extraction_guidance}
-"""
+Rules for your reply:
+- Sound natural and human (1-2 short sentences)
+- Do NOT accuse or warn
+- Do NOT use words: scam, scammer, fraud, phishing, suspicious
+- Never share OTP, passwords, PIN, CVV, bank details, or any personal info
+- If they pressure you to act/verify/pay or mention OTP/links: ask for an official website/link or helpline number to verify
+- If it's just a greeting/intro: respond politely and ask what this is about and which bank/service they mean
+""".strip()
 
     try:
         reply = call_llm_for_reply(prompt)
-
         if not reply or not isinstance(reply, str) or not reply.strip():
             raise ValueError("Empty reply from LLM")
-
         reply = reply.strip()
         if (reply.startswith('"') and reply.endswith('"')) or (reply.startswith("'") and reply.endswith("'")):
             reply = reply[1:-1].strip()
@@ -233,25 +221,27 @@ Instructions:
         # Guardrail: never reveal detection in the outgoing message.
         banned = ["scam", "scammer", "fraud", "phishing", "suspicious"]
         if any(b in reply.lower() for b in banned):
-            return {
-                "reply": (
-                    "I'm not comfortable sharing any details over messages. "
-                    "Can you send the official link or contact number so I can verify?"
-                ),
-                "fallback": True,
-                "reason": "Detected disallowed wording in model reply",
-            }
+            rewrite_prompt = f"""
+Rewrite the message below to remove any mention of: scam, scammer, fraud, phishing, suspicious.
+Keep it natural, cautious, and 1-2 short sentences. Do not accuse or warn. Ask for an official link or helpline to verify.
+
+Message:
+{reply}
+""".strip()
+            rewritten = call_llm_for_reply(rewrite_prompt).strip()
+            if rewritten and not any(b in rewritten.lower() for b in banned):
+                reply = rewritten
+            elif strict:
+                raise ValueError("Model produced disallowed wording in reply.")
 
         return {
             "reply": reply,
             "fallback": False,
-            "reason": None
+            "reason": None,
         }
 
     except Exception:
+        if strict:
+            raise
         # Safe fallback that still fits the persona
-        return {
-            "reply": PASSIVE_FALLBACK_REPLY,
-            "fallback": True,
-            "reason": "LLM unavailable, fallback reply used"
-        }
+        return {"reply": PASSIVE_FALLBACK_REPLY, "fallback": True, "reason": "LLM unavailable, fallback reply used"}

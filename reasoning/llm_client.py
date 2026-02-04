@@ -18,10 +18,44 @@ load_dotenv()
 _LAST_CALL_TS_CLASSIFIER = 0.0
 _LAST_CALL_TS_REPLY = 0.0
 
-_GEMINI_MODEL: Any | None = None
-_GEMINI_INIT_ATTEMPTED = False
+_GENAI_CONFIGURED = False
+_GEMINI_MODELS: dict[str, Any] = {}
 
 _GEMINI_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
+
+def _strip_code_fences(text: str) -> str:
+    t = (text or "").strip()
+    if not t.startswith("```"):
+        return t
+
+    # Remove surrounding fences.
+    t = t.strip("`").strip()
+    if t.lower().startswith("json"):
+        t = t[4:].strip()
+    return t
+
+
+def _extract_json_object(text: str) -> str | None:
+    t = _strip_code_fences(text)
+    start = t.find("{")
+    end = t.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return t[start : end + 1]
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    candidate = _extract_json_object(text)
+    if not candidate:
+        return None
+    try:
+        obj = json.loads(candidate)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return obj
 
 
 def _generate_content_with_timeout(model: Any, prompt: str) -> Any | None:
@@ -38,39 +72,98 @@ def _generate_content_with_timeout(model: Any, prompt: str) -> Any | None:
         return future.result(timeout=timeout_s)
     except FuturesTimeoutError:
         return None
-    except Exception:
-        return None
 
 
 def _gemini_enabled() -> bool:
     return (settings.LLM_PROVIDER or "").strip().lower() == "gemini"
 
 
-def _ensure_gemini_model() -> Any | None:
+def _ensure_gemini_model(model_name: str | None = None) -> Any | None:
     """
     Lazy-init Gemini model. Never raises.
     """
-    global _GEMINI_MODEL, _GEMINI_INIT_ATTEMPTED
+    global _GENAI_CONFIGURED, _GEMINI_MODELS
 
     if not _gemini_enabled():
         return None
 
-    if _GEMINI_INIT_ATTEMPTED:
-        return _GEMINI_MODEL
-    _GEMINI_INIT_ATTEMPTED = True
-
     if not settings.GEMINI_API_KEY:
         return None
+
+    name = (model_name or settings.LLM_MODEL_NAME or "").strip()
+    if not name:
+        return None
+    if not name.startswith("models/"):
+        name = f"models/{name}"
+
+    if name in _GEMINI_MODELS:
+        return _GEMINI_MODELS[name]
 
     try:
         import google.generativeai as genai  # type: ignore
 
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        _GEMINI_MODEL = genai.GenerativeModel(settings.LLM_MODEL_NAME)
-        return _GEMINI_MODEL
+        if not _GENAI_CONFIGURED:
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+            _GENAI_CONFIGURED = True
+
+        model = genai.GenerativeModel(name)
+        _GEMINI_MODELS[name] = model
+        return model
     except Exception:
-        _GEMINI_MODEL = None
         return None
+
+
+def _model_name_candidates() -> list[str]:
+    names: list[str] = []
+    primary = (settings.LLM_MODEL_NAME or "").strip()
+    if primary:
+        if not primary.startswith("models/"):
+            primary = f"models/{primary}"
+        names.append(primary)
+    for n in getattr(settings, "LLM_FALLBACK_MODEL_NAMES", []) or []:
+        s = str(n or "").strip()
+        if s and s not in names:
+            if not s.startswith("models/"):
+                s = f"models/{s}"
+            names.append(s)
+    return names
+
+
+def _is_retryable_gemini_error(exc: Exception) -> bool:
+    msg = str(exc or "")
+    ml = msg.lower()
+    return (
+        " 429 " in f" {msg} "
+        or "quota exceeded" in ml
+        or "rate limit" in ml
+        or "retry_delay" in ml
+        or "resource has been exhausted" in ml
+        or " 404 " in f" {msg} "
+        or "not found" in ml
+        or "not supported" in ml
+    )
+
+
+def _generate_with_fallback_models(prompt: str) -> Any | None:
+    last_error: Exception | None = None
+    for name in _model_name_candidates():
+        model = _ensure_gemini_model(name)
+        if model is None:
+            continue
+        try:
+            response = _generate_content_with_timeout(model, prompt)
+            if response is None:
+                last_error = TimeoutError(f"Gemini request timed out for model {name}.")
+                continue
+            return response
+        except Exception as e:
+            last_error = e
+            if _is_retryable_gemini_error(e):
+                continue
+            raise
+    if last_error:
+        raise last_error
+    return None
 
 
 def _extract_text_from_classifier_prompt(prompt: str) -> str:
@@ -185,43 +278,40 @@ def call_llm(prompt: str) -> dict[str, Any]:
       "confidence": float (0.0-1.0),
       "reason": str
     }
+
+    Note: when `LLM_STRICT=true`, this function may raise instead of falling back.
     """
     global _LAST_CALL_TS_CLASSIFIER
 
-    # Always provide a deterministic fallback (used for mock mode, cooldown, or any failure).
+    strict = bool(getattr(settings, "LLM_STRICT", False))
+
+    # Deterministic fallback (used when strict mode is disabled).
     fallback_text = _extract_text_from_classifier_prompt(prompt)
     fallback = _heuristic_classify(fallback_text)
 
-    # Mock mode: skip any external LLM calls.
-    model = _ensure_gemini_model()
-    if model is None:
+    if not _gemini_enabled() or not settings.GEMINI_API_KEY:
+        if strict:
+            raise RuntimeError("Gemini is not configured (LLM_PROVIDER=gemini + GEMINI_API_KEY required).")
         return fallback
 
     now = time.time()
-    if now - _LAST_CALL_TS_CLASSIFIER < settings.LLM_COOLDOWN_SECONDS:
-        return fallback
+    if settings.LLM_COOLDOWN_SECONDS > 0 and now - _LAST_CALL_TS_CLASSIFIER < settings.LLM_COOLDOWN_SECONDS:
+        # Respect cooldown by waiting (keeps outputs AI-generated instead of falling back).
+        time.sleep(max(0.0, settings.LLM_COOLDOWN_SECONDS - (now - _LAST_CALL_TS_CLASSIFIER)))
+        now = time.time()
 
     try:
-        response = _generate_content_with_timeout(model, prompt)
+        response = _generate_with_fallback_models(prompt)
         if response is None:
+            if strict:
+                raise TimeoutError("Gemini request timed out.")
             return fallback
         _LAST_CALL_TS_CLASSIFIER = now
 
         raw_text = (response.text or "").strip()
-
-        # Remove markdown code fences.
-        if raw_text.startswith("```"):
-            raw_text = raw_text.strip("`")
-            if raw_text.lower().startswith("json"):
-                raw_text = raw_text[4:].strip()
-
-        # Extract JSON object only.
-        start = raw_text.find("{")
-        end = raw_text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            raw_text = raw_text[start : end + 1]
-
-        result = json.loads(raw_text)
+        result = _parse_json_object(raw_text)
+        if result is None:
+            raise ValueError("Failed to parse JSON from Gemini classifier output.")
         scam = bool(result.get("scam", False))
         confidence = float(result.get("confidence", fallback["confidence"]))
         confidence = max(0.0, min(confidence, 1.0))
@@ -229,35 +319,90 @@ def call_llm(prompt: str) -> dict[str, Any]:
 
         return {"scam": scam, "confidence": confidence, "reason": reason}
 
-    except Exception:
+    except Exception as e:
+        if strict:
+            raise
+        print(f"Gemini classifier error: {e}")
         return fallback
+
+
+def call_llm_for_json(prompt: str, *, retries: int = 1) -> dict[str, Any] | None:
+    """
+    JSON-only generation helper.
+    Returns a dict or None (when strict mode is disabled).
+    When `LLM_STRICT=true`, this function may raise on failures/timeouts.
+    """
+    strict = bool(getattr(settings, "LLM_STRICT", False))
+    if not _gemini_enabled() or not settings.GEMINI_API_KEY:
+        if strict:
+            raise RuntimeError("Gemini is not configured (LLM_PROVIDER=gemini + GEMINI_API_KEY required).")
+        return None
+
+    # Reuse the reply cooldown bucket (this is typically called for "generation"-type tasks).
+    global _LAST_CALL_TS_REPLY
+    now = time.time()
+    if settings.LLM_COOLDOWN_SECONDS > 0 and now - _LAST_CALL_TS_REPLY < settings.LLM_COOLDOWN_SECONDS:
+        time.sleep(max(0.0, settings.LLM_COOLDOWN_SECONDS - (now - _LAST_CALL_TS_REPLY)))
+        now = time.time()
+
+    try:
+        response = _generate_with_fallback_models(prompt)
+    except Exception as e:
+        if strict:
+            raise
+        print(f"Gemini JSON error: {e}")
+        return None
+    if response is None:
+        if strict:
+            raise TimeoutError("Gemini request timed out.")
+        return None
+    _LAST_CALL_TS_REPLY = now
+
+    raw_text = (response.text or "").strip()
+    parsed = _parse_json_object(raw_text)
+    if parsed is not None:
+        return parsed
+
+    if retries <= 0:
+        if strict:
+            raise ValueError("Failed to parse JSON from Gemini output.")
+        return None
+
+    repair_prompt = (
+        "Return ONLY a valid JSON object. Do not include markdown, code fences, or extra text.\n\n"
+        f"Previous output:\n{raw_text}"
+    )
+    return call_llm_for_json(repair_prompt, retries=retries - 1)
 
 
 def call_llm_for_reply(prompt: str) -> str:
     """
     Plain-text generation used for victim replies and (optionally) analyst summaries.
-    Never raises; always returns a safe human-like string.
+    In non-strict mode, never raises and falls back to a safe string.
+    When `LLM_STRICT=true`, this function may raise on failures/timeouts.
     """
     global _LAST_CALL_TS_REPLY
 
-    model = _ensure_gemini_model()
-    now = time.time()
-
-    if model is None:
+    strict = bool(getattr(settings, "LLM_STRICT", False))
+    if not _gemini_enabled() or not settings.GEMINI_API_KEY:
+        if strict:
+            raise RuntimeError("Gemini is not configured (LLM_PROVIDER=gemini + GEMINI_API_KEY required).")
         return (
             "I'm not comfortable sharing any details over messages. "
             "Can you send the official link or contact number so I can verify?"
         )
+    now = time.time()
 
-    if now - _LAST_CALL_TS_REPLY < settings.LLM_COOLDOWN_SECONDS:
-        return (
-            "Sorry, I'm a bit busy right now. "
-            "Can you send the official link or a number to call so I can verify this?"
-        )
+    if settings.LLM_COOLDOWN_SECONDS > 0 and now - _LAST_CALL_TS_REPLY < settings.LLM_COOLDOWN_SECONDS:
+        # Wait instead of returning a deterministic line.
+        time.sleep(max(0.0, settings.LLM_COOLDOWN_SECONDS - (now - _LAST_CALL_TS_REPLY)))
+        now = time.time()
 
     try:
-        response = _generate_content_with_timeout(model, prompt)
+        response = _generate_with_fallback_models(prompt)
         if response is None:
+            if strict:
+                raise TimeoutError("Gemini request timed out.")
             return (
                 "Sorry, I'm not sure I understand. "
                 "Can you share the official link or contact number so I can verify?"
@@ -266,13 +411,18 @@ def call_llm_for_reply(prompt: str) -> str:
 
         reply = (response.text or "").strip()
         if not reply:
+            if strict:
+                raise ValueError("Empty reply from Gemini.")
             return (
                 "Sorry, I'm not sure I understand. "
                 "Can you share the official link or number so I can check?"
             )
         return reply
 
-    except Exception:
+    except Exception as e:
+        if strict:
+            raise
+        print(f"Gemini reply error: {e}")
         return (
             "Sorry, I'm not sure I understand. "
             "Can you share the official link or contact number so I can verify?"

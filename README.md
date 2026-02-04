@@ -74,10 +74,14 @@ Example payload:
 - `API_KEY` (required): the value expected in the `x-api-key` header
 - `LLM_PROVIDER` (optional): `mock` (default) or `gemini`
 - `GEMINI_API_KEY` (required if `LLM_PROVIDER=gemini`)
-- `LLM_MODEL_NAME` (optional): Gemini model name
+- `LLM_MODEL_NAME` (optional): Gemini model name (default: `gemini-flash-latest`)
+- `LLM_FALLBACK_MODEL_NAMES` (optional): comma-separated model fallbacks (used if quota/rate limits hit)
+- `LLM_REQUEST_TIMEOUT_SECONDS` (optional): per-request LLM timeout
+- `LLM_STRICT` (optional): if `true`, disables deterministic fallbacks (can increase errors on free tiers)
 - `CALLBACK_ENABLED` (optional): `true`/`false` (default: `true`)
 - `CALLBACK_URL` (optional): defaults to the GUVI endpoint
 - `CALLBACK_MIN_TURNS` (optional): minimum `totalMessagesExchanged` before callback (default: `2`)
+- `CALLBACK_DRY_RUN` (optional): if `true`, logs callback payload instead of sending it
 
 **Run Locally**
 ```bash
@@ -87,7 +91,7 @@ uvicorn app:app --reload
 
 **Deploy on Render (important)**
 - Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
-- Environment vars: `API_KEY` (required), `LLM_PROVIDER` (`mock` recommended for speed), `GEMINI_API_KEY` (only if `LLM_PROVIDER=gemini`)
+- Environment vars: `API_KEY` (required), `LLM_PROVIDER=gemini`, `GEMINI_API_KEY`, `LLM_MODEL_NAME=gemini-flash-latest`
 - If you see 30s timeouts from the evaluator, verify the service is awake (Render free tier can sleep) and that you are binding to `$PORT`.
 
 **Quick Test**
@@ -102,3 +106,13 @@ curl -X POST http://127.0.0.1:8000/honeypot/message \
     "metadata": {"channel": "SMS", "language": "English", "locale": "IN"}
   }'
 ```
+
+**Keep Render Warm (Free Tier)**
+```bash
+python keep_warm.py
+```
+Or in PowerShell:
+```powershell
+.\keep_warm.ps1
+```
+Optional env vars: `WARM_URL`, `WARM_INTERVAL_SECONDS`, `WARM_TIMEOUT_SECONDS`.
