@@ -15,6 +15,7 @@ from extraction.extractor import extract_intelligence
 
 # Server-side session storage to accumulate intelligence across all messages
 _session_store: Dict[str, List[Dict[str, Any]]] = {}
+_session_seen: Dict[str, set[tuple]] = {}
 
 app = FastAPI(
     title="Agentic Honey-Pot - Scam Detection & Intelligence Extraction API",
@@ -67,6 +68,81 @@ def require_api_key(
 _callback_sent: set[str] = set()
 
 
+def _message_key(sender: str | None, text: str | None, timestamp: int | None) -> tuple:
+    return (
+        (sender or "").strip().lower(),
+        (text or "").strip(),
+        int(timestamp) if timestamp is not None else None,
+    )
+
+
+def _append_message(
+    session_id: str,
+    *,
+    sender: str | None,
+    text: str | None,
+    timestamp: int | None,
+) -> None:
+    key = _message_key(sender, text, timestamp)
+    seen = _session_seen.setdefault(session_id, set())
+    if key in seen:
+        return
+    seen.add(key)
+
+    _session_store.setdefault(session_id, []).append(
+        {
+            "role": "scammer" if (sender or "").lower() == "scammer" else "agent",
+            "text": text or "",
+            "sender": sender or "user",
+        }
+    )
+
+
+def _scammer_text_only(conversation_history: list) -> str:
+    lines: list[str] = []
+    for m in conversation_history:
+        sender = getattr(m, "sender", None) or (m.get("sender") if isinstance(m, dict) else None)
+        text = getattr(m, "text", None) or (m.get("text") if isinstance(m, dict) else "")
+        if str(sender).lower() != "scammer":
+            continue
+        t = str(text or "").strip()
+        if t:
+            lines.append(t)
+    return "\n".join(lines)
+
+
+def _should_send_callback(
+    *,
+    total_messages_exchanged: int,
+    conversation_history: list,
+) -> bool:
+    if total_messages_exchanged < settings.CALLBACK_MIN_TURNS:
+        return False
+
+    scammer_text = _scammer_text_only(conversation_history)
+    hints = extract_intelligence(scammer_text)
+    urls = hints.get("urls", [])
+    upi_ids = hints.get("upi_ids", [])
+    phone_numbers = hints.get("phone_numbers", [])
+    bank_accounts = hints.get("bank_accounts", [])
+
+    concrete_signals = len(urls) + len(upi_ids) + len(phone_numbers) + len(bank_accounts)
+    category_count = sum(1 for group in (urls, upi_ids, phone_numbers, bank_accounts) if group)
+
+    # Prefer waiting for multiple concrete indicator categories when possible.
+    if category_count >= 2:
+        return True
+
+    # If there's at least one concrete indicator, wait a couple extra turns
+    # to give the scammer time to reveal additional identifiers.
+    if concrete_signals >= 1:
+        return total_messages_exchanged >= (settings.CALLBACK_MIN_TURNS + 2)
+
+    # If only generic tactics/keywords are present, wait a few more turns.
+    extra_turns = 4
+    return total_messages_exchanged >= (settings.CALLBACK_MIN_TURNS + extra_turns)
+
+
 def _maybe_send_callback(
     *,
     session_id: str,
@@ -86,7 +162,10 @@ def _maybe_send_callback(
         return
 
     # "Sufficient engagement" is enforced by a minimum message count.
-    if total_messages_exchanged < settings.CALLBACK_MIN_TURNS:
+    if not _should_send_callback(
+        total_messages_exchanged=total_messages_exchanged,
+        conversation_history=conversation_history,
+    ):
         return
 
     def _post_callback() -> None:
@@ -174,27 +253,23 @@ def _handle_message_event(req: HackathonRequest, background_tasks: BackgroundTas
     )
     reply_text = (reply_result.get("reply") or "").strip() or "Sorry, can you explain that again?"
 
-    # Accumulate all messages server-side for complete intelligence extraction
-    if session_id not in _session_store:
-        _session_store[session_id] = []
-    
-    # Add all messages from conversation history
+    # Accumulate messages server-side with de-duplication.
     for m in req.conversationHistory:
-        _session_store[session_id].append({
-            "role": "scammer" if m.sender == "scammer" else "agent",
-            "text": m.text or "",
-            "sender": m.sender
-        })
-    
-    # Add current scammer message
-    _session_store[session_id].append({
-        "role": "scammer",
-        "text": latest_text,
-        "sender": latest_sender
-    })
-    
-    # Use accumulated server-side history for intelligence extraction
-    accumulated_history = _session_store[session_id]
+        _append_message(
+            session_id,
+            sender=m.sender,
+            text=m.text,
+            timestamp=m.timestamp,
+        )
+
+    _append_message(
+        session_id,
+        sender=latest_sender,
+        text=latest_text,
+        timestamp=req.message.timestamp,
+    )
+
+    accumulated_history = _session_store.get(session_id, [])
     total_messages_exchanged = len(accumulated_history) + 1  # +1 for our reply
 
     _maybe_send_callback(

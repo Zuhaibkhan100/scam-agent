@@ -88,13 +88,13 @@ def _sanitize_intel(payload: dict[str, Any], transcript: str, hint_payload: dict
 
     # Keep items that match the expected pattern OR appear in transcript
     # Pattern matching is primary validation to avoid losing concrete data
+    # Bank accounts must be concrete numeric identifiers; do not allow
+    # free-form phrases like "SBI account" even if they appear in transcript.
     bank_accounts_clean = []
     for b in combined_bank_accounts:
         digits_only = re.sub(r"\D", "", b)
         if bank_pat.fullmatch(digits_only or ""):
             bank_accounts_clean.append(digits_only)
-        elif appears_in_transcript(b):
-            bank_accounts_clean.append(b)
     
     upi_ids_clean = [u for u in combined_upi_ids if upi_pat.search(u) or appears_in_transcript(u)]
     phishing_links_clean = [u for u in combined_phishing_links if url_pat.search(u) or appears_in_transcript(u)]
