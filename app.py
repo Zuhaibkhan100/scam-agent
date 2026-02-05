@@ -182,14 +182,14 @@ def _handle_message_event(req: HackathonRequest, background_tasks: BackgroundTas
     for m in req.conversationHistory:
         _session_store[session_id].append({
             "role": "scammer" if m.sender == "scammer" else "agent",
-            "content": m.text or "",
+            "text": m.text or "",
             "sender": m.sender
         })
     
     # Add current scammer message
     _session_store[session_id].append({
         "role": "scammer",
-        "content": latest_text,
+        "text": latest_text,
         "sender": latest_sender
     })
     

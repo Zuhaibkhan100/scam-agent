@@ -86,11 +86,19 @@ def _sanitize_intel(payload: dict[str, Any], transcript: str, hint_payload: dict
     phone_pat = re.compile(r"^\+?\d[\d\s().-]{7,}\d$")
     bank_pat = re.compile(r"^\d{9,18}$")
 
-    # Keep items that either appear in transcript OR match the expected pattern
-    bank_accounts = [b for b in combined_bank_accounts if appears_in_transcript(b) or bank_pat.fullmatch(re.sub(r"\D", "", b) or "")]
-    upi_ids = [u for u in combined_upi_ids if appears_in_transcript(u) or upi_pat.search(u)]
-    phishing_links = [u for u in combined_phishing_links if appears_in_transcript(u) or url_pat.search(u)]
-    phone_numbers = [p for p in combined_phone_numbers if appears_in_transcript(p) or phone_pat.fullmatch(p)]
+    # Keep items that match the expected pattern OR appear in transcript
+    # Pattern matching is primary validation to avoid losing concrete data
+    bank_accounts_clean = []
+    for b in combined_bank_accounts:
+        digits_only = re.sub(r"\D", "", b)
+        if bank_pat.fullmatch(digits_only or ""):
+            bank_accounts_clean.append(digits_only)
+        elif appears_in_transcript(b):
+            bank_accounts_clean.append(b)
+    
+    upi_ids_clean = [u for u in combined_upi_ids if upi_pat.search(u) or appears_in_transcript(u)]
+    phishing_links_clean = [u for u in combined_phishing_links if url_pat.search(u) or appears_in_transcript(u)]
+    phone_numbers_clean = [p for p in combined_phone_numbers if phone_pat.fullmatch(p) or appears_in_transcript(p)]
     suspicious_keywords = combined_keywords
 
     # Keywords are free-form; keep short phrases and try to keep only phrases
@@ -109,10 +117,10 @@ def _sanitize_intel(payload: dict[str, Any], transcript: str, hint_payload: dict
     suspicious_keywords = filtered_keywords
 
     return IntelligencePayload(
-        bankAccounts=_dedupe_preserve_order(bank_accounts),
-        upiIds=_dedupe_preserve_order(upi_ids),
-        phishingLinks=_dedupe_preserve_order(phishing_links),
-        phoneNumbers=_dedupe_preserve_order(phone_numbers),
+        bankAccounts=_dedupe_preserve_order(bank_accounts_clean),
+        upiIds=_dedupe_preserve_order(upi_ids_clean),
+        phishingLinks=_dedupe_preserve_order(phishing_links_clean),
+        phoneNumbers=_dedupe_preserve_order(phone_numbers_clean),
         suspiciousKeywords=_dedupe_preserve_order(suspicious_keywords),
     )
 
