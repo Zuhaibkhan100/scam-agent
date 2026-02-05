@@ -155,6 +155,35 @@ def generate_final_intelligence(
         "impersonation": hints.get("impersonation"),
         "tactics": hints.get("tactics", []),
     }
+    if getattr(settings, "DIAGNOSTICS", False):
+        try:
+            print(
+                "[DIAG] final_intel_hints "
+                + json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "transcript_lines": len([ln for ln in transcript.splitlines() if ln.strip()]),
+                        "hint_counts": {
+                            "bankAccounts": len(hint_payload.get("bankAccounts", [])),
+                            "upiIds": len(hint_payload.get("upiIds", [])),
+                            "phishingLinks": len(hint_payload.get("phishingLinks", [])),
+                            "phoneNumbers": len(hint_payload.get("phoneNumbers", [])),
+                            "suspiciousKeywords": len(hint_payload.get("suspiciousKeywords", [])),
+                        },
+                        "hint_samples": {
+                            "bankAccounts": (hint_payload.get("bankAccounts") or [])[:2],
+                            "upiIds": (hint_payload.get("upiIds") or [])[:2],
+                            "phishingLinks": (hint_payload.get("phishingLinks") or [])[:2],
+                            "phoneNumbers": (hint_payload.get("phoneNumbers") or [])[:2],
+                            "suspiciousKeywords": (hint_payload.get("suspiciousKeywords") or [])[:4],
+                        },
+                    },
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        except Exception:
+            pass
 
     prompt = f"""
 You are an information extraction system for scam conversations.
@@ -229,6 +258,24 @@ Hints (may be incomplete):
         agent_notes = "Observed impersonation and pressure tactics while avoiding sharing any sensitive information."
 
     extracted_intel = _sanitize_intel(result, transcript, hint_payload)
+    if getattr(settings, "DIAGNOSTICS", False):
+        try:
+            print(
+                "[DIAG] final_intel_output "
+                + json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "scamDetected": scam_detected,
+                        "totalMessagesExchanged": int(total_messages_exchanged),
+                        "extractedIntelligence": extracted_intel.model_dump(),
+                        "agentNotes_prefix": agent_notes[:200],
+                    },
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        except Exception:
+            pass
 
     return {
         "sessionId": session_id,

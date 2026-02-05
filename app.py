@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+import json
 import requests
 import time
 from typing import Dict, List, Any
@@ -68,6 +69,16 @@ def require_api_key(
 _callback_sent: set[str] = set()
 
 
+def _diag(event: str, data: dict) -> None:
+    if not getattr(settings, "DIAGNOSTICS", False):
+        return
+    try:
+        print(f"[DIAG] {event} {json.dumps(data, ensure_ascii=True, sort_keys=True)}")
+    except Exception:
+        # Last-resort: avoid crashing the request due to logging issues.
+        print(f"[DIAG] {event} {data}")
+
+
 def _message_key(sender: str | None, text: str | None, timestamp: int | None) -> tuple:
     return (
         (sender or "").strip().lower(),
@@ -111,13 +122,20 @@ def _scammer_text_only(conversation_history: list) -> str:
     return "\n".join(lines)
 
 
-def _should_send_callback(
+def _callback_gate_details(
     *,
     total_messages_exchanged: int,
     conversation_history: list,
-) -> bool:
+) -> tuple[bool, dict[str, Any]]:
     if total_messages_exchanged < settings.CALLBACK_MIN_TURNS:
-        return False
+        return (
+            False,
+            {
+                "reason": "below_min_turns",
+                "total_messages_exchanged": total_messages_exchanged,
+                "min_turns": settings.CALLBACK_MIN_TURNS,
+            },
+        )
 
     scammer_text = _scammer_text_only(conversation_history)
     hints = extract_intelligence(scammer_text)
@@ -131,16 +149,67 @@ def _should_send_callback(
 
     # Prefer waiting for multiple concrete indicator categories when possible.
     if category_count >= 2:
-        return True
+        return (
+            True,
+            {
+                "reason": "enough_categories",
+                "total_messages_exchanged": total_messages_exchanged,
+                "min_turns": settings.CALLBACK_MIN_TURNS,
+                "category_count": category_count,
+                "concrete_signals": concrete_signals,
+                "counts": {
+                    "urls": len(urls),
+                    "upi_ids": len(upi_ids),
+                    "phone_numbers": len(phone_numbers),
+                    "bank_accounts": len(bank_accounts),
+                },
+            },
+        )
 
     # If there's at least one concrete indicator, wait a couple extra turns
     # to give the scammer time to reveal additional identifiers.
     if concrete_signals >= 1:
-        return total_messages_exchanged >= (settings.CALLBACK_MIN_TURNS + 2)
+        needed = settings.CALLBACK_MIN_TURNS + 2
+        should_send = total_messages_exchanged >= needed
+        return (
+            should_send,
+            {
+                "reason": "has_one_signal_waiting_more_turns" if not should_send else "has_one_signal",
+                "total_messages_exchanged": total_messages_exchanged,
+                "min_turns": settings.CALLBACK_MIN_TURNS,
+                "needed_turns": needed,
+                "category_count": category_count,
+                "concrete_signals": concrete_signals,
+                "counts": {
+                    "urls": len(urls),
+                    "upi_ids": len(upi_ids),
+                    "phone_numbers": len(phone_numbers),
+                    "bank_accounts": len(bank_accounts),
+                },
+            },
+        )
 
     # If only generic tactics/keywords are present, wait a few more turns.
     extra_turns = 4
-    return total_messages_exchanged >= (settings.CALLBACK_MIN_TURNS + extra_turns)
+    needed = settings.CALLBACK_MIN_TURNS + extra_turns
+    should_send = total_messages_exchanged >= needed
+    return (
+        should_send,
+        {
+            "reason": "no_concrete_waiting_more_turns" if not should_send else "no_concrete_timeout_reached",
+            "total_messages_exchanged": total_messages_exchanged,
+            "min_turns": settings.CALLBACK_MIN_TURNS,
+            "needed_turns": needed,
+            "category_count": category_count,
+            "concrete_signals": concrete_signals,
+            "counts": {
+                "urls": len(urls),
+                "upi_ids": len(upi_ids),
+                "phone_numbers": len(phone_numbers),
+                "bank_accounts": len(bank_accounts),
+            },
+        },
+    )
 
 
 def _maybe_send_callback(
@@ -157,15 +226,27 @@ def _maybe_send_callback(
     Sent once per session after scam is detected and engagement is considered sufficient.
     """
     if not settings.CALLBACK_ENABLED:
+        _diag("callback_skip", {"sessionId": session_id, "reason": "callback_disabled"})
         return
     if session_id in _callback_sent:
+        _diag("callback_skip", {"sessionId": session_id, "reason": "already_sent"})
         return
 
     # "Sufficient engagement" is enforced by a minimum message count.
-    if not _should_send_callback(
+    should_send, gate = _callback_gate_details(
         total_messages_exchanged=total_messages_exchanged,
         conversation_history=conversation_history,
-    ):
+    )
+    _diag(
+        "callback_gate",
+        {
+            "sessionId": session_id,
+            "history_len": len(conversation_history or []),
+            "store_len": len(_session_store.get(session_id, [])),
+            **gate,
+        },
+    )
+    if not should_send:
         return
 
     def _post_callback() -> None:
@@ -179,15 +260,29 @@ def _maybe_send_callback(
             )
         except Exception as e:
             print(f"Callback generation error for session {session_id}: {e}")
+            _diag("callback_error", {"sessionId": session_id, "stage": "generate_final_intelligence", "error": str(e)})
             return
 
         if not payload:
             print(f"Callback generation returned empty payload for session {session_id}")
+            _diag("callback_error", {"sessionId": session_id, "stage": "empty_payload"})
             return
 
         if not payload.get("scamDetected", False):
             # Best-effort: only report once the model considers it a scam.
+            _diag("callback_skip", {"sessionId": session_id, "reason": "scamDetected_false"})
             return
+
+        _diag(
+            "callback_payload",
+            {
+                "sessionId": session_id,
+                "payload_totalMessagesExchanged": payload.get("totalMessagesExchanged"),
+                "payload_extractedIntelligence": payload.get("extractedIntelligence", {}),
+                "payload_agentNotes": str(payload.get("agentNotes", ""))[:200],
+                "dry_run": bool(settings.CALLBACK_DRY_RUN),
+            },
+        )
 
         if settings.CALLBACK_DRY_RUN:
             _callback_sent.add(session_id)
@@ -200,6 +295,10 @@ def _maybe_send_callback(
                 if 200 <= response.status_code < 300:
                     _callback_sent.add(session_id)
                     print(f"Callback sent successfully for session {session_id}")
+                    _diag(
+                        "callback_sent",
+                        {"sessionId": session_id, "status_code": response.status_code},
+                    )
                     return
 
                 # Best-effort: do not fail the API response.
@@ -207,8 +306,17 @@ def _maybe_send_callback(
                 print(
                     f"Callback failed for session {session_id}: {response.status_code} - {response.text}"
                 )
+                _diag(
+                    "callback_failed",
+                    {
+                        "sessionId": session_id,
+                        "status_code": response.status_code,
+                        "response_text": (response.text or "")[:300],
+                    },
+                )
             except Exception as e:
                 print(f"Callback error for session {session_id}: {e}")
+                _diag("callback_error", {"sessionId": session_id, "stage": "requests.post", "error": str(e)})
 
             # Small backoff before retrying.
             time.sleep(0.5 * (attempt + 1))
@@ -232,6 +340,23 @@ def _handle_message_event(req: HackathonRequest, background_tasks: BackgroundTas
     session_id = req.sessionId
     latest_sender = req.message.sender
     latest_text = (req.message.text or "").strip()
+    history_len = len(req.conversationHistory or [])
+    history_scammer = sum(1 for m in (req.conversationHistory or []) if m.sender == "scammer")
+    history_user = history_len - history_scammer
+
+    _diag(
+        "request",
+        {
+            "sessionId": session_id,
+            "latest_sender": latest_sender,
+            "latest_text_prefix": latest_text[:120],
+            "latest_timestamp": req.message.timestamp,
+            "conversationHistory_len": history_len,
+            "conversationHistory_counts": {"scammer": history_scammer, "user": history_user},
+            "callback_already_sent": session_id in _callback_sent,
+            "app_version": app.version,
+        },
+    )
 
     # Convert history into the memory format expected by the victim agent:
     # hackathon sender "user" corresponds to our honeypot agent.
@@ -271,6 +396,15 @@ def _handle_message_event(req: HackathonRequest, background_tasks: BackgroundTas
 
     accumulated_history = _session_store.get(session_id, [])
     total_messages_exchanged = len(accumulated_history) + 1  # +1 for our reply
+
+    _diag(
+        "session_state",
+        {
+            "sessionId": session_id,
+            "accumulated_history_len": len(accumulated_history),
+            "total_messages_exchanged": total_messages_exchanged,
+        },
+    )
 
     _maybe_send_callback(
         session_id=session_id,

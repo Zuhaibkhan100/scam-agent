@@ -88,6 +88,13 @@ class Settings:
     CALLBACK_MIN_TURNS: int = int(os.getenv("CALLBACK_MIN_TURNS", "2"))
     CALLBACK_DRY_RUN: bool = os.getenv("CALLBACK_DRY_RUN", "false").lower() in ("1", "true", "yes", "on")
 
+    # ---------------------------
+    # Diagnostics (temporary)
+    # ---------------------------
+    # Enable extra server-side prints for debugging judge integration.
+    # Safe to keep off in production.
+    DIAGNOSTICS: bool = os.getenv("DIAGNOSTICS", "false").lower() in ("1", "true", "yes", "on")
+
 
 # --------------------------------------------------
 # Singleton settings object
