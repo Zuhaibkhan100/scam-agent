@@ -65,28 +65,33 @@ def _sanitize_intel(payload: dict[str, Any], transcript: str, hint_payload: dict
     suspicious_keywords = _as_str_list(intel.get("suspiciousKeywords"))
 
     # Merge with hint_payload (regex-extracted items) to ensure no data is lost
-    bank_accounts = _dedupe_preserve_order(bank_accounts + _as_str_list(hint_payload.get("bankAccounts")))
-    upi_ids = _dedupe_preserve_order(upi_ids + _as_str_list(hint_payload.get("upiIds")))
-    phishing_links = _dedupe_preserve_order(phishing_links + _as_str_list(hint_payload.get("phishingLinks")))
-    phone_numbers = _dedupe_preserve_order(phone_numbers + _as_str_list(hint_payload.get("phoneNumbers")))
-    suspicious_keywords = _dedupe_preserve_order(suspicious_keywords + _as_str_list(hint_payload.get("suspiciousKeywords")))
+    # IMPORTANT: Combine both lists and deduplicate
+    combined_bank_accounts = _dedupe_preserve_order(bank_accounts + _as_str_list(hint_payload.get("bankAccounts")))
+    combined_upi_ids = _dedupe_preserve_order(upi_ids + _as_str_list(hint_payload.get("upiIds")))
+    combined_phishing_links = _dedupe_preserve_order(phishing_links + _as_str_list(hint_payload.get("phishingLinks")))
+    combined_phone_numbers = _dedupe_preserve_order(phone_numbers + _as_str_list(hint_payload.get("phoneNumbers")))
+    combined_keywords = _dedupe_preserve_order(suspicious_keywords + _as_str_list(hint_payload.get("suspiciousKeywords")))
 
     # Soft validation to reduce hallucination: keep only items that appear in the transcript
     # or match the expected pattern class.
     scammer_only = "\n".join([line for line in transcript.splitlines() if line.lower().startswith("scammer:")]).lower()
+    full_transcript_lower = transcript.lower()
 
-    def appears(s: str) -> bool:
-        return s.lower() in scammer_only
+    def appears_in_transcript(s: str) -> bool:
+        """Check if string appears anywhere in the transcript (not just scammer lines)"""
+        return s.lower() in full_transcript_lower
 
-    url_pat = re.compile(r"https?://", flags=re.I)
+    url_pat = re.compile(r"https?://|www\.", flags=re.I)
     upi_pat = re.compile(r"\b[\w.\-]{2,}@[a-zA-Z]{2,}\b")
     phone_pat = re.compile(r"^\+?\d[\d\s().-]{7,}\d$")
     bank_pat = re.compile(r"^\d{9,18}$")
 
-    bank_accounts = [b for b in bank_accounts if appears(b) or bank_pat.fullmatch(re.sub(r"\D", "", b) or "")]
-    upi_ids = [u for u in upi_ids if appears(u) or upi_pat.search(u)]
-    phishing_links = [u for u in phishing_links if appears(u) or url_pat.search(u)]
-    phone_numbers = [p for p in phone_numbers if appears(p) or phone_pat.fullmatch(p)]
+    # Keep items that either appear in transcript OR match the expected pattern
+    bank_accounts = [b for b in combined_bank_accounts if appears_in_transcript(b) or bank_pat.fullmatch(re.sub(r"\D", "", b) or "")]
+    upi_ids = [u for u in combined_upi_ids if appears_in_transcript(u) or upi_pat.search(u)]
+    phishing_links = [u for u in combined_phishing_links if appears_in_transcript(u) or url_pat.search(u)]
+    phone_numbers = [p for p in combined_phone_numbers if appears_in_transcript(p) or phone_pat.fullmatch(p)]
+    suspicious_keywords = combined_keywords
 
     # Keywords are free-form; keep short phrases and try to keep only phrases
     # that appear in scammer messages to reduce hallucination.

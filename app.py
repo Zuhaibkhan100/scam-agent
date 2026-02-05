@@ -5,11 +5,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import requests
 import time
+from typing import Dict, List, Any
 
 from config.settings import settings
 from models.hackathon_schemas import HackathonRequest, HackathonResponse
 from reasoning.final_intelligence import generate_final_intelligence
 from reasoning.victim_agent import generate_passive_reply
+from extraction.extractor import extract_intelligence
+
+# Server-side session storage to accumulate intelligence across all messages
+_session_store: Dict[str, List[Dict[str, Any]]] = {}
 
 app = FastAPI(
     title="Agentic Honey-Pot - Scam Detection & Intelligence Extraction API",
@@ -169,13 +174,33 @@ def _handle_message_event(req: HackathonRequest, background_tasks: BackgroundTas
     )
     reply_text = (reply_result.get("reply") or "").strip() or "Sorry, can you explain that again?"
 
-    # Total messages exchanged should count BOTH sides; this callback is sent after we generate our reply.
-    total_messages_exchanged = len(req.conversationHistory) + 2
+    # Accumulate all messages server-side for complete intelligence extraction
+    if session_id not in _session_store:
+        _session_store[session_id] = []
+    
+    # Add all messages from conversation history
+    for m in req.conversationHistory:
+        _session_store[session_id].append({
+            "role": "scammer" if m.sender == "scammer" else "agent",
+            "content": m.text or "",
+            "sender": m.sender
+        })
+    
+    # Add current scammer message
+    _session_store[session_id].append({
+        "role": "scammer",
+        "content": latest_text,
+        "sender": latest_sender
+    })
+    
+    # Use accumulated server-side history for intelligence extraction
+    accumulated_history = _session_store[session_id]
+    total_messages_exchanged = len(accumulated_history) + 1  # +1 for our reply
 
     _maybe_send_callback(
         session_id=session_id,
         total_messages_exchanged=total_messages_exchanged,
-        conversation_history=req.conversationHistory,
+        conversation_history=accumulated_history,
         latest_sender=latest_sender,
         latest_text=latest_text,
         background_tasks=background_tasks,
