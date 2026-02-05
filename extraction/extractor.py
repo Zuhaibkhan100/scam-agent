@@ -3,7 +3,7 @@ import re
 # ==================================================
 # Regex patterns for concrete scam intelligence
 # ==================================================
-URL_PATTERN = r"https?://[^\s<>\"]+"
+URL_PATTERN = r"https?://[^\s<>\"]+|www\.[^\s<>\"]+"
 UPI_PATTERN = r"\b[\w.\-]{2,}@[a-zA-Z]{2,}\b"
 EMAIL_PATTERN = r"[\w\.-]+@[\w\.-]+\.\w+"
 # Looser phone capture; we normalize and validate later.

@@ -167,9 +167,14 @@ def generate_passive_reply(
     # If we're not using Gemini, stay deterministic but still extraction-oriented.
     strict = bool(getattr(settings, "LLM_STRICT", False))
     use_gemini = (settings.LLM_PROVIDER or "").strip().lower() == "gemini" and bool(settings.GEMINI_API_KEY)
+    
+    # DEBUG: Print what we're using
+    print(f"🤖 DEBUG: LLM_PROVIDER={settings.LLM_PROVIDER}, GEMINI_API_KEY_SET={bool(settings.GEMINI_API_KEY)}, USE_GEMINI={use_gemini}")
+    
     if not use_gemini:
         if strict:
             raise RuntimeError("Gemini is required (set LLM_PROVIDER=gemini and GEMINI_API_KEY).")
+        print("🤖 DEBUG: Using MOCK replies (Gemini not available)")
         return {
             "reply": _mock_reply(last_message=last_message, agent_mode=agent_mode, memory=memory, risk=risk),
             "fallback": True,
@@ -208,6 +213,8 @@ Rules for your reply:
 - Never share OTP, passwords, PIN, CVV, bank details, or any personal info
 - If they pressure you to act/verify/pay or mention OTP/links: ask for an official website/link or helpline number to verify
 - If it's just a greeting/intro: respond politely and ask what this is about and which bank/service they mean
+- IMPORTANT: Do NOT repeat the same question you asked before. Ask something NEW or slightly different each time.
+- Vary your replies - sound uncertain, curious, or hesitant. Avoid asking "which bank" multiple times.
 """.strip()
 
     try:

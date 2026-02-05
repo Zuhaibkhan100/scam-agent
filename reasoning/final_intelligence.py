@@ -53,7 +53,7 @@ def _build_transcript(conversation_history: list, latest_sender: str, latest_tex
     return "\n".join(lines).strip()
 
 
-def _sanitize_intel(payload: dict[str, Any], transcript: str) -> IntelligencePayload:
+def _sanitize_intel(payload: dict[str, Any], transcript: str, hint_payload: dict) -> IntelligencePayload:
     intel = payload.get("extractedIntelligence") if isinstance(payload, dict) else None
     if not isinstance(intel, dict):
         intel = {}
@@ -63,6 +63,13 @@ def _sanitize_intel(payload: dict[str, Any], transcript: str) -> IntelligencePay
     phishing_links = _as_str_list(intel.get("phishingLinks"))
     phone_numbers = _as_str_list(intel.get("phoneNumbers"))
     suspicious_keywords = _as_str_list(intel.get("suspiciousKeywords"))
+
+    # Merge with hint_payload (regex-extracted items) to ensure no data is lost
+    bank_accounts = _dedupe_preserve_order(bank_accounts + _as_str_list(hint_payload.get("bankAccounts")))
+    upi_ids = _dedupe_preserve_order(upi_ids + _as_str_list(hint_payload.get("upiIds")))
+    phishing_links = _dedupe_preserve_order(phishing_links + _as_str_list(hint_payload.get("phishingLinks")))
+    phone_numbers = _dedupe_preserve_order(phone_numbers + _as_str_list(hint_payload.get("phoneNumbers")))
+    suspicious_keywords = _dedupe_preserve_order(suspicious_keywords + _as_str_list(hint_payload.get("suspiciousKeywords")))
 
     # Soft validation to reduce hallucination: keep only items that appear in the transcript
     # or match the expected pattern class.
@@ -208,7 +215,7 @@ Hints (may be incomplete):
     if not agent_notes:
         agent_notes = "Observed impersonation and pressure tactics while avoiding sharing any sensitive information."
 
-    extracted_intel = _sanitize_intel(result, transcript)
+    extracted_intel = _sanitize_intel(result, transcript, hint_payload)
 
     return {
         "sessionId": session_id,
