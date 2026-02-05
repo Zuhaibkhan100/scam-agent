@@ -87,6 +87,11 @@ class Settings:
     CALLBACK_ENABLED: bool = os.getenv("CALLBACK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
     CALLBACK_MIN_TURNS: int = int(os.getenv("CALLBACK_MIN_TURNS", "2"))
     CALLBACK_DRY_RUN: bool = os.getenv("CALLBACK_DRY_RUN", "false").lower() in ("1", "true", "yes", "on")
+    # How many different concrete indicator categories must be present before we send the final callback.
+    # Categories: urls, upi_ids, phone_numbers, bank_accounts.
+    CALLBACK_MIN_INDICATOR_CATEGORIES: int = int(os.getenv("CALLBACK_MIN_INDICATOR_CATEGORIES", "2"))
+    # Fallback: if we still don't reach the min categories, force-send after this many extra turns.
+    CALLBACK_FORCE_EXTRA_TURNS: int = int(os.getenv("CALLBACK_FORCE_EXTRA_TURNS", "6"))
 
     # ---------------------------
     # Diagnostics (temporary)

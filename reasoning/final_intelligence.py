@@ -45,10 +45,23 @@ def _build_transcript(conversation_history: list, latest_sender: str, latest_tex
         if t:
             lines.append(f"{sender_label}: {t}")
 
-    latest_label = "Scammer" if str(latest_sender).lower() == "scammer" else "User"
-    lt = str(latest_text or "").strip()
-    if lt:
-        lines.append(f"{latest_label}: {lt}")
+    # Avoid duplicating the latest message if the caller already included it
+    # in conversation_history (common when server-side history is accumulated).
+    last_matches_latest = False
+    if conversation_history:
+        last = conversation_history[-1]
+        last_sender = getattr(last, "sender", None) or (last.get("sender") if isinstance(last, dict) else "")
+        last_text = getattr(last, "text", None) or (last.get("text") if isinstance(last, dict) else "")
+        last_matches_latest = (
+            str(last_sender or "").strip().lower() == str(latest_sender or "").strip().lower()
+            and str(last_text or "").strip() == str(latest_text or "").strip()
+        )
+
+    if not last_matches_latest:
+        latest_label = "Scammer" if str(latest_sender).lower() == "scammer" else "User"
+        lt = str(latest_text or "").strip()
+        if lt:
+            lines.append(f"{latest_label}: {lt}")
 
     return "\n".join(lines).strip()
 

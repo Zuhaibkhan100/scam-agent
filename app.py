@@ -147,67 +147,69 @@ def _callback_gate_details(
     concrete_signals = len(urls) + len(upi_ids) + len(phone_numbers) + len(bank_accounts)
     category_count = sum(1 for group in (urls, upi_ids, phone_numbers, bank_accounts) if group)
 
-    # Prefer waiting for multiple concrete indicator categories when possible.
-    if category_count >= 2:
+    min_categories = int(getattr(settings, "CALLBACK_MIN_INDICATOR_CATEGORIES", 2))
+    if min_categories < 1:
+        min_categories = 1
+
+    force_extra_turns = int(getattr(settings, "CALLBACK_FORCE_EXTRA_TURNS", 6))
+    if force_extra_turns < 0:
+        force_extra_turns = 0
+
+    needed_turns = settings.CALLBACK_MIN_TURNS + force_extra_turns
+
+    counts = {
+        "urls": len(urls),
+        "upi_ids": len(upi_ids),
+        "phone_numbers": len(phone_numbers),
+        "bank_accounts": len(bank_accounts),
+    }
+
+    # Primary gate: wait for enough *different* indicator categories.
+    if category_count >= min_categories:
         return (
             True,
             {
                 "reason": "enough_categories",
                 "total_messages_exchanged": total_messages_exchanged,
                 "min_turns": settings.CALLBACK_MIN_TURNS,
+                "min_indicator_categories": min_categories,
+                "force_extra_turns": force_extra_turns,
+                "needed_turns": needed_turns,
                 "category_count": category_count,
                 "concrete_signals": concrete_signals,
-                "counts": {
-                    "urls": len(urls),
-                    "upi_ids": len(upi_ids),
-                    "phone_numbers": len(phone_numbers),
-                    "bank_accounts": len(bank_accounts),
-                },
+                "counts": counts,
             },
         )
 
-    # If there's at least one concrete indicator, wait a couple extra turns
-    # to give the scammer time to reveal additional identifiers.
-    if concrete_signals >= 1:
-        needed = settings.CALLBACK_MIN_TURNS + 2
-        should_send = total_messages_exchanged >= needed
+    # Fallback: force-send after enough extra turns, even if indicators are sparse.
+    if total_messages_exchanged >= needed_turns:
         return (
-            should_send,
+            True,
             {
-                "reason": "has_one_signal_waiting_more_turns" if not should_send else "has_one_signal",
+                "reason": "force_timeout_reached",
                 "total_messages_exchanged": total_messages_exchanged,
                 "min_turns": settings.CALLBACK_MIN_TURNS,
-                "needed_turns": needed,
+                "min_indicator_categories": min_categories,
+                "force_extra_turns": force_extra_turns,
+                "needed_turns": needed_turns,
                 "category_count": category_count,
                 "concrete_signals": concrete_signals,
-                "counts": {
-                    "urls": len(urls),
-                    "upi_ids": len(upi_ids),
-                    "phone_numbers": len(phone_numbers),
-                    "bank_accounts": len(bank_accounts),
-                },
+                "counts": counts,
             },
         )
 
-    # If only generic tactics/keywords are present, wait a few more turns.
-    extra_turns = 4
-    needed = settings.CALLBACK_MIN_TURNS + extra_turns
-    should_send = total_messages_exchanged >= needed
     return (
-        should_send,
+        False,
         {
-            "reason": "no_concrete_waiting_more_turns" if not should_send else "no_concrete_timeout_reached",
+            "reason": "waiting_for_more_categories",
             "total_messages_exchanged": total_messages_exchanged,
             "min_turns": settings.CALLBACK_MIN_TURNS,
-            "needed_turns": needed,
+            "min_indicator_categories": min_categories,
+            "force_extra_turns": force_extra_turns,
+            "needed_turns": needed_turns,
             "category_count": category_count,
             "concrete_signals": concrete_signals,
-            "counts": {
-                "urls": len(urls),
-                "upi_ids": len(upi_ids),
-                "phone_numbers": len(phone_numbers),
-                "bank_accounts": len(bank_accounts),
-            },
+            "counts": counts,
         },
     )
 
